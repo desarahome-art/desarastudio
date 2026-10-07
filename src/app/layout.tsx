@@ -9,6 +9,14 @@ import './globals.css'
 export const metadata: Metadata = {
   title: 'Desara Home Studio',
   description: 'Booking foto profesional di Pontianak',
+  icons: {
+    icon: [
+      { url: '/logo.png', type: 'image/png' },
+    ],
+    apple: [
+      { url: '/logo.png' },
+    ],
+  },
 }
 
 export default function RootLayout({

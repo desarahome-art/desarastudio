@@ -1,11 +1,12 @@
 'use client'
 
 import Link from 'next/link'
+import Image from 'next/image'
 import { usePathname, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import {
   Calendar, Clock, ListOrdered, Package, Settings,
-  LogOut, Camera, X, Menu
+  LogOut, X, Menu
 } from 'lucide-react'
 import { useState } from 'react'
 import { cn } from '@/lib/utils'
@@ -55,8 +56,14 @@ export function AdminNav({ userEmail }: { userEmail: string }) {
     <div className="flex flex-col h-full">
       {/* Logo */}
       <div className="flex items-center gap-3 px-4 py-6 mb-2">
-        <div className="w-9 h-9 rounded-xl bg-[rgb(var(--color-forest))] flex items-center justify-center">
-          <Camera className="w-5 h-5 text-[rgb(var(--color-blitz))]" />
+        <div className="w-10 h-10 rounded-xl overflow-hidden bg-white border border-[rgb(var(--color-border))] flex items-center justify-center p-1 flex-shrink-0 shadow-sm">
+          <Image
+            src="/logo.png"
+            alt="Desara Studio"
+            width={40}
+            height={40}
+            className="w-full h-full object-contain"
+          />
         </div>
         <div>
           <p className="font-heading font-bold text-sm leading-tight">Desara Studio</p>
@@ -90,8 +97,14 @@ export function AdminNav({ userEmail }: { userEmail: string }) {
       {/* Mobile top bar */}
       <div className="lg:hidden fixed top-0 left-0 right-0 z-40 bg-[rgb(var(--color-surface))] border-b border-[rgb(var(--color-border))] px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-[rgb(var(--color-forest))] flex items-center justify-center">
-            <Camera className="w-4 h-4 text-[rgb(var(--color-blitz))]" />
+          <div className="w-8 h-8 rounded-lg overflow-hidden bg-white border border-[rgb(var(--color-border))] flex items-center justify-center p-0.5 flex-shrink-0">
+            <Image
+              src="/logo.png"
+              alt="Desara Studio"
+              width={32}
+              height={32}
+              className="w-full h-full object-contain"
+            />
           </div>
           <span className="font-heading font-bold text-sm">Desara Admin</span>
         </div>

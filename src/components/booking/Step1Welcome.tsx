@@ -1,8 +1,9 @@
 'use client'
 
+import Image from 'next/image'
 import { motion } from 'framer-motion'
 import { Button } from '@/components/ui/Button'
-import { Camera, Clock, ArrowRight, Sparkles } from 'lucide-react'
+import { Clock, ArrowRight, Sparkles } from 'lucide-react'
 import type { Settings } from '@/types'
 
 interface Step1WelcomeProps {
@@ -21,18 +22,25 @@ export function Step1Welcome({ settings, onNext, onWaitingList, onPricelist }: S
       transition={{ duration: 0.4, ease: [0.4, 0, 0.2, 1] }}
       className="flex flex-col items-center justify-center min-h-[70vh] px-6 py-12 text-center"
     >
-      {/* Logo/icon */}
+      {/* Logo / Avatar */}
       <motion.div
         initial={{ scale: 0.8, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         transition={{ delay: 0.1, duration: 0.5, ease: [0.34, 1.56, 0.64, 1] }}
         className="relative mb-8"
       >
-        <div className="w-24 h-24 rounded-3xl bg-[rgb(var(--color-forest))] flex items-center justify-center shadow-xl">
-          <Camera className="w-12 h-12 text-[rgb(var(--color-blitz))]" />
+        <div className="w-28 h-28 sm:w-32 sm:h-32 rounded-3xl overflow-hidden bg-white flex items-center justify-center shadow-xl border-2 border-[rgb(var(--color-forest)/0.15)] p-3">
+          <Image
+            src="/logo.png"
+            alt={settings.nama_studio || 'Desara Home Studio'}
+            width={128}
+            height={128}
+            className="w-full h-full object-contain"
+            priority
+          />
         </div>
         {/* Decorative ring */}
-        <div className="absolute -inset-3 rounded-[2rem] border-2 border-[rgb(var(--color-blitz)/0.3)] animate-pulse" />
+        <div className="absolute -inset-3 rounded-[2rem] border-2 border-[rgb(var(--color-blitz)/0.4)] animate-pulse pointer-events-none" />
       </motion.div>
 
       {/* Title */}

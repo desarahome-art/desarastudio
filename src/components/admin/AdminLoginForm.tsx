@@ -1,11 +1,11 @@
 'use client'
 
+import Image from 'next/image'
 import { useState } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
-import { Camera } from 'lucide-react'
 
 export function AdminLoginForm() {
   const router = useRouter()
@@ -38,8 +38,15 @@ export function AdminLoginForm() {
   return (
     <div className="w-full max-w-sm">
       <div className="flex items-center gap-3 mb-8">
-        <div className="w-10 h-10 rounded-xl bg-[rgb(var(--color-forest))] flex items-center justify-center">
-          <Camera className="w-5 h-5 text-[rgb(var(--color-blitz))]" />
+        <div className="w-12 h-12 rounded-xl overflow-hidden bg-white border border-[rgb(var(--color-border))] flex items-center justify-center p-1.5 shadow-sm">
+          <Image
+            src="/logo.png"
+            alt="Desara Studio"
+            width={48}
+            height={48}
+            className="w-full h-full object-contain"
+            priority
+          />
         </div>
         <div>
           <p className="font-heading font-bold text-lg">Desara Studio</p>
