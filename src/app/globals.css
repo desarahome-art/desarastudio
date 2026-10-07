@@ -2,26 +2,85 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@media (prefers-color-scheme: dark) {
+@layer base {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --color-forest: 38 79 67;        /* #264F43 – hijau tua kebiruan */
+    --color-forest-light: 52 107 90;
+    --color-cream: 250 245 235;      /* #FAF5EB – krem */
+    --color-cream-dark: 240 232 216;
+    --color-blitz: 251 191 36;       /* #FBBF24 – aksen kuning blitz */
+    --color-text: 20 30 28;
+    --color-text-muted: 100 116 108;
+    --color-surface: 255 255 255;
+    --color-border: 220 214 200;
   }
-}
 
-body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+  .dark {
+    --color-cream: 22 28 26;
+    --color-cream-dark: 30 38 36;
+    --color-text: 240 238 232;
+    --color-text-muted: 160 172 166;
+    --color-surface: 28 36 34;
+    --color-border: 60 72 68;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    @apply scroll-smooth;
+    color-scheme: light dark;
+  }
+
+  body {
+    @apply bg-[rgb(var(--color-cream))] text-[rgb(var(--color-text))];
+  }
+
+  /* Keyboard focus visible */
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-[rgb(var(--color-blitz))];
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
 }
 
 @layer utilities {
-  .text-balance {
-    text-wrap: balance;
+  .font-heading {
+    font-family: 'Bricolage Grotesque', sans-serif;
   }
+  .font-body {
+    font-family: 'DM Sans', sans-serif;
+  }
+}
+
+/* Shutter overlay animation */
+@keyframes shutter-open {
+  0%   { transform: scaleY(1); }
+  100% { transform: scaleY(0); }
+}
+
+@keyframes shutter-close {
+  0%   { transform: scaleY(0); }
+  50%  { transform: scaleY(1); }
+  100% { transform: scaleY(0); }
+}
+
+.shutter-top {
+  transform-origin: top;
+}
+.shutter-bottom {
+  transform-origin: bottom;
+}
+.animate-shutter-open .shutter-top {
+  animation: shutter-open 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+}
+.animate-shutter-open .shutter-bottom {
+  animation: shutter-open 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
 }
