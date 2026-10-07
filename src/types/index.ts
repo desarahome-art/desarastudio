@@ -12,10 +12,16 @@ export interface BackgroundItem {
   image_url?: string
 }
 
+export interface ClosedDateItem {
+  tanggal: string // 'YYYY-MM-DD'
+  keterangan: string
+}
+
 export interface Settings {
   nama_studio: string
   wa_admin: string
-  rekening_bri: string
+  rekening_bni: string
+  rekening_bri?: string
   nama_rekening: string
   dp_minimal: number
   teks_sambutan: string
@@ -24,6 +30,7 @@ export interface Settings {
   jam_tutup: string
   slot_interval: number
   backgrounds: (string | BackgroundItem)[]
+  closed_dates?: ClosedDateItem[]
 }
 
 export interface Category {

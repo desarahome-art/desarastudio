@@ -119,12 +119,9 @@ export function Step4Pricelist({
               </div>
 
               {/* Extras */}
-              {(pkg.jumlah_foto_edit || pkg.bonus) && (
+              {pkg.bonus && (
                 <div className="mt-3 pt-3 border-t border-[rgb(var(--color-border))] text-xs text-[rgb(var(--color-text-muted))]">
-                  {pkg.jumlah_foto_edit && (
-                    <p>✓ {pkg.jumlah_foto_edit} foto edit</p>
-                  )}
-                  {pkg.bonus && <p>✓ {pkg.bonus}</p>}
+                  <p>✓ {pkg.bonus}</p>
                 </div>
               )}
             </motion.button>

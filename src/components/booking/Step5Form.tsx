@@ -256,6 +256,7 @@ export function Step5Form({
             value={tanggal}
             onChange={handleDateChange}
             error={errors.tanggal}
+            closedDates={settings?.closed_dates || []}
           />
         </section>
 

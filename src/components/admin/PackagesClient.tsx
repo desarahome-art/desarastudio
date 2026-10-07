@@ -16,7 +16,6 @@ interface PackageFormData {
   maks_orang: string
   cetak_ukuran: string
   cetak_jumlah: string
-  jumlah_foto_edit: string
   bonus: string
 }
 
@@ -24,7 +23,7 @@ const emptyForm: PackageFormData = {
   nama: '', harga: '', durasi_menit: '60',
   jumlah_pilihan_background: '2', maks_orang: '4',
   cetak_ukuran: '', cetak_jumlah: '',
-  jumlah_foto_edit: '', bonus: '',
+  bonus: '',
 }
 
 interface PackagesClientProps {
@@ -85,7 +84,7 @@ export function PackagesClient({ initialCategories, initialPackages }: PackagesC
       maks_orang: parseInt(pkgForm.maks_orang) || 1,
       cetak_ukuran: pkgForm.cetak_ukuran || null,
       cetak_jumlah: pkgForm.cetak_jumlah ? parseInt(pkgForm.cetak_jumlah) : null,
-      jumlah_foto_edit: pkgForm.jumlah_foto_edit ? parseInt(pkgForm.jumlah_foto_edit) : null,
+      jumlah_foto_edit: null,
       bonus: pkgForm.bonus || null,
     }
 
@@ -163,7 +162,7 @@ export function PackagesClient({ initialCategories, initialPackages }: PackagesC
                           {pkg.cetak_ukuran && ` · Cetak ${pkg.cetak_ukuran}`}
                         </p>
                       </div>
-                      <button onClick={() => { setEditPkg(pkg); setPkgForm({ nama: pkg.nama, harga: String(pkg.harga), durasi_menit: String(pkg.durasi_menit), jumlah_pilihan_background: String(pkg.jumlah_pilihan_background), maks_orang: String(pkg.maks_orang), cetak_ukuran: pkg.cetak_ukuran || '', cetak_jumlah: pkg.cetak_jumlah ? String(pkg.cetak_jumlah) : '', jumlah_foto_edit: pkg.jumlah_foto_edit ? String(pkg.jumlah_foto_edit) : '', bonus: pkg.bonus || '' }) }} className="p-1 hover:text-[rgb(var(--color-forest))]">
+                      <button onClick={() => { setEditPkg(pkg); setPkgForm({ nama: pkg.nama, harga: String(pkg.harga), durasi_menit: String(pkg.durasi_menit), jumlah_pilihan_background: String(pkg.jumlah_pilihan_background), maks_orang: String(pkg.maks_orang), cetak_ukuran: pkg.cetak_ukuran || '', cetak_jumlah: pkg.cetak_jumlah ? String(pkg.cetak_jumlah) : '', bonus: pkg.bonus || '' }) }} className="p-1 hover:text-[rgb(var(--color-forest))]">
                         <Pencil className="w-4 h-4" />
                       </button>
                       <button onClick={() => deletePkg(pkg.id)} className="p-1 text-red-400 hover:text-red-600">
@@ -187,7 +186,6 @@ export function PackagesClient({ initialCategories, initialPackages }: PackagesC
                       <Input label="Maks. orang" type="number" value={pkgForm.maks_orang} onChange={e => setPkgForm(p => ({ ...p, maks_orang: e.target.value }))} />
                       <Input label="Ukuran cetak (opsional)" placeholder="cth. 12R" value={pkgForm.cetak_ukuran} onChange={e => setPkgForm(p => ({ ...p, cetak_ukuran: e.target.value }))} />
                       <Input label="Jumlah cetak" type="number" value={pkgForm.cetak_jumlah} onChange={e => setPkgForm(p => ({ ...p, cetak_jumlah: e.target.value }))} />
-                      <Input label="Jumlah foto edit" type="number" value={pkgForm.jumlah_foto_edit} onChange={e => setPkgForm(p => ({ ...p, jumlah_foto_edit: e.target.value }))} />
                       <div className="sm:col-span-2">
                         <Input label="Bonus (opsional)" value={pkgForm.bonus} onChange={e => setPkgForm(p => ({ ...p, bonus: e.target.value }))} />
                       </div>

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import { markWaitingListContacted, convertWaitingListToBooking } from '@/app/actions'
+import { markWaitingListContacted, convertWaitingListToBooking, deleteWaitingList } from '@/app/actions'
 import { Button } from '@/components/ui/Button'
 import { parseWaitingListInfo } from '@/lib/utils'
 import {
@@ -14,6 +14,7 @@ import {
   CheckCircle2,
   AlertCircle,
   ExternalLink,
+  Trash2,
 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
@@ -29,6 +30,7 @@ export function WaitingListClient({
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const [convertingId, setConvertingId] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
 
   const handleContacted = (id: string) => {
@@ -36,6 +38,32 @@ export function WaitingListClient({
       await markWaitingListContacted(id)
       router.refresh()
     })
+  }
+
+  const handleDelete = async (id: string, nama: string) => {
+    const confirmed = window.confirm(
+      `Apakah Anda yakin ingin MENGHAPUS PERMANEN data waiting list client "${nama}"?\n\nTindakan ini tidak dapat dibatalkan.`
+    )
+    if (!confirmed) return
+
+    setDeletingId(id)
+    setFeedback(null)
+    try {
+      const res = await deleteWaitingList(id)
+      if (res.error) {
+        setFeedback({ type: 'error', message: res.error })
+      } else {
+        setFeedback({ type: 'success', message: `Data waiting list ${nama} berhasil dihapus permanen.` })
+        router.refresh()
+      }
+    } catch (err: unknown) {
+      setFeedback({
+        type: 'error',
+        message: (err as Error)?.message || 'Gagal menghapus data waiting list.',
+      })
+    } finally {
+      setDeletingId(null)
+    }
   }
 
   const handleConvertToBooking = async (id: string) => {
@@ -246,6 +274,18 @@ export function WaitingListClient({
                         Tandai
                       </Button>
                     )}
+
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => handleDelete(item.id, item.nama)}
+                      loading={deletingId === item.id}
+                      disabled={isPending || deletingId === item.id}
+                      className="border border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300 px-2.5 shrink-0"
+                      title="Hapus Permanen Waiting List Ini"
+                    >
+                      <Trash2 className="w-4 h-4 text-red-500" />
+                    </Button>
                   </div>
                 </div>
               </div>

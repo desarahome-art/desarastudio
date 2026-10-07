@@ -2,8 +2,28 @@
 
 import { createAdminClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
-import type { BookingFormData, BookingStatus, CetakStatus, Package } from '@/types'
+import type { BookingFormData, BookingStatus, CetakStatus, Package, ClosedDateItem } from '@/types'
 import { isSlotBlocked, generateTimeSlots, parseWaitingListInfo } from '@/lib/utils'
+
+// Helper to check if a date is closed by studio admin
+async function checkIsDateClosed(supabase: Awaited<ReturnType<typeof createAdminClient>>, tanggal: string): Promise<ClosedDateItem | null> {
+  try {
+    const { data: settingRow } = await supabase
+      .from('settings')
+      .select('value')
+      .eq('key', 'closed_dates')
+      .single()
+
+    if (settingRow && Array.isArray(settingRow.value)) {
+      const closedList = settingRow.value as ClosedDateItem[]
+      const match = closedList.find(c => c.tanggal === tanggal)
+      return match || null
+    }
+    return null
+  } catch {
+    return null
+  }
+}
 
 // ---- Public: upload bukti transfer ----
 export async function uploadBuktiTransfer(formData: FormData): Promise<{ path?: string; error?: string }> {
@@ -40,6 +60,14 @@ export async function uploadBuktiTransfer(formData: FormData): Promise<{ path?: 
 // ---- Public: submit booking ----
 export async function submitBooking(formData: BookingFormData) {
   const supabase = await createAdminClient()
+
+  // 0. Cek apakah studio tutup pada tanggal tersebut
+  const closedInfo = await checkIsDateClosed(supabase, formData.tanggal)
+  if (closedInfo) {
+    return {
+      error: `Studio tutup pada tanggal ${formData.tanggal}${closedInfo.keterangan ? ` (${closedInfo.keterangan})` : ''}. Silakan pilih tanggal lain.`,
+    }
+  }
 
   // Check slot availability server-side
   const jamMulai = formData.jam_mulai
@@ -150,6 +178,14 @@ export async function submitWaitingList(data: {
     return { error: 'Jam sesi waiting list wajib dipilih.' }
   }
 
+  // 0. Cek apakah studio tutup pada tanggal tersebut
+  const closedInfo = await checkIsDateClosed(supabase, data.tanggal_ingin)
+  if (closedInfo) {
+    return {
+      error: `Studio tutup pada tanggal ${data.tanggal_ingin}${closedInfo.keterangan ? ` (${closedInfo.keterangan})` : ''}. Silakan pilih tanggal lain.`,
+    }
+  }
+
   // 1. Cek apakah jam sudah ada yang waiting list pada tanggal tersebut
   const { data: existingWaiting } = await supabase
     .from('waiting_list')
@@ -227,6 +263,13 @@ export async function getWaitingListSlotStatus(
 }> {
   try {
     const supabase = await createAdminClient()
+
+    // Cek apakah studio tutup
+    const closedInfo = await checkIsDateClosed(supabase, tanggal)
+    if (closedInfo) {
+      return { allSlots: [], bookedSlots: [], waitingListSlots: [] }
+    }
+
     const intv = Number(intervalMenit) || 30
     const allSlots = generateTimeSlots(jamBuka || '08:00', jamTutup || '20:00', intv)
 
@@ -401,6 +444,13 @@ export async function getAvailableSlots(
 ): Promise<string[]> {
   try {
     const supabase = await createAdminClient()
+
+    // Cek apakah tanggal studio ditutup/libur
+    const closedInfo = await checkIsDateClosed(supabase, tanggal)
+    if (closedInfo) {
+      return []
+    }
+
     const { data: blocked, error } = await supabase
       .from('bookings')
       .select('jam_mulai, durasi_total')
@@ -497,48 +547,101 @@ export async function updateBookingStatus(
   return { success: true }
 }
 
-// ---- Admin: update booking schedule (reschedule / ganti tanggal & waktu) ----
+// ---- Admin: update booking schedule and/or package (reschedule & edit paket) ----
 export async function updateBookingSchedule(
   bookingId: string,
   tanggal: string,
   jamMulai: string,
   adminEmail?: string,
-  keterangan?: string
+  keterangan?: string,
+  newPackageId?: string
 ) {
   const supabase = await createAdminClient()
 
   const { data: existing, error: fetchError } = await supabase
     .from('bookings')
-    .select('tanggal, jam_mulai, catatan')
+    .select('*, booking_addons(*)')
     .eq('id', bookingId)
     .single()
 
   if (fetchError || !existing) return { error: 'Booking tidak ditemukan.' }
 
   const ketTrimmed = keterangan?.trim()
-  let updatedCatatan = existing.catatan
+  const updates: Record<string, unknown> = {
+    tanggal,
+    jam_mulai: jamMulai,
+  }
 
+  let packageChangeNote = ''
+  if (newPackageId && newPackageId !== existing.package_id) {
+    const { data: pkgData, error: pkgError } = await supabase
+      .from('packages')
+      .select('*, categories(nama)')
+      .eq('id', newPackageId)
+      .single()
+
+    if (pkgError || !pkgData) {
+      return { error: 'Paket foto baru tidak ditemukan.' }
+    }
+
+    const categoryNama = (pkgData.categories as { nama?: string })?.nama || existing.category_nama
+
+    // Hitung total durasi baru (durasi paket baru + addon jenis waktu jika ada)
+    const addons = (existing.booking_addons || []) as { jenis: string; jumlah: number; total: number; harga: number }[]
+    const addonWaktuMenit = addons
+      .filter(a => a.jenis === 'waktu')
+      .reduce((sum, a) => sum + (a.jumlah * 15), 0)
+    const durasiTotal = (pkgData.durasi_menit || 30) + addonWaktuMenit
+
+    // Hitung total harga baru (harga paket baru + sum total addon)
+    const totalAddons = addons.reduce((sum, a) => sum + (a.total || (a.harga * a.jumlah) || 0), 0)
+    const totalHarga = (pkgData.harga || 0) + totalAddons
+
+    // Clean snapshot without relations
+    const cleanPkg = { ...pkgData }
+    delete (cleanPkg as { categories?: unknown }).categories
+
+    updates.category_id = pkgData.category_id
+    updates.category_nama = categoryNama
+    updates.package_id = pkgData.id
+    updates.package_nama = pkgData.nama
+    updates.package_harga = pkgData.harga
+    updates.package_snapshot = cleanPkg
+    updates.durasi_total = durasiTotal
+    updates.total_harga = totalHarga
+
+    packageChangeNote = `Paket diubah dari "${existing.package_nama}" ke "${pkgData.nama}" (${pkgData.harga ? 'Rp ' + Number(pkgData.harga).toLocaleString('id-ID') : 'Rp 0'})`
+  }
+
+  // Bangun catatan riwayat
+  const changes: string[] = []
+  if (existing.tanggal !== tanggal || existing.jam_mulai !== jamMulai) {
+    changes.push(`Jadwal: ${existing.tanggal} ${existing.jam_mulai} ➔ ${tanggal} ${jamMulai}`)
+  }
+  if (packageChangeNote) {
+    changes.push(packageChangeNote)
+  }
   if (ketTrimmed) {
-    const rescheduleNote = `[Reschedule ${existing.tanggal} ${existing.jam_mulai} ➔ ${tanggal} ${jamMulai}: ${ketTrimmed}]`
-    updatedCatatan = existing.catatan
-      ? `${existing.catatan}\n${rescheduleNote}`
-      : rescheduleNote
+    changes.push(`Keterangan: ${ketTrimmed}`)
+  }
+
+  if (changes.length > 0) {
+    const noteText = `[Update: ${changes.join(' | ')}]`
+    updates.catatan = existing.catatan
+      ? `${existing.catatan}\n${noteText}`
+      : noteText
   }
 
   const { error } = await supabase
     .from('bookings')
-    .update({
-      tanggal,
-      jam_mulai: jamMulai,
-      catatan: updatedCatatan,
-    })
+    .update(updates)
     .eq('id', bookingId)
 
   if (error) return { error: error.message }
 
-  const logCatatan = ketTrimmed
-    ? `Jadwal diubah oleh admin dari ${existing.tanggal} ${existing.jam_mulai} ke ${tanggal} ${jamMulai}. Keterangan: ${ketTrimmed}`
-    : `Jadwal diubah oleh admin dari ${existing.tanggal} ${existing.jam_mulai} ke ${tanggal} ${jamMulai}`
+  const logCatatan = changes.length > 0
+    ? `Diperbarui oleh admin. ${changes.join('. ')}`
+    : `Data diperbarui oleh admin`
 
   await supabase.from('booking_status_log').insert({
     booking_id: bookingId,
@@ -652,3 +755,61 @@ export async function updateCetakStatus(
   revalidatePath('/admin/bookings')
   return { success: true }
 }
+
+// ---- Admin: delete booking permanently ----
+export async function deleteBooking(bookingId: string) {
+  try {
+    const supabase = await createAdminClient()
+
+    // Ambil info bukti transfer jika ada untuk dibersihkan dari storage
+    const { data: booking } = await supabase
+      .from('bookings')
+      .select('bukti_transfer')
+      .eq('id', bookingId)
+      .single()
+
+    if (booking?.bukti_transfer) {
+      try {
+        await supabase.storage
+          .from('bukti-transfer')
+          .remove([booking.bukti_transfer])
+      } catch (storageErr) {
+        console.warn('Gagal menghapus file bukti transfer:', storageErr)
+      }
+    }
+
+    // Hapus booking (booking_addons & booking_status_log ikut terhapus via CASCADE)
+    const { error } = await supabase
+      .from('bookings')
+      .delete()
+      .eq('id', bookingId)
+
+    if (error) return { error: error.message }
+
+    revalidatePath('/admin/bookings')
+    revalidatePath('/')
+    return { success: true }
+  } catch (err: unknown) {
+    return { error: (err as Error)?.message || 'Gagal menghapus data booking' }
+  }
+}
+
+// ---- Admin: delete waiting list permanently ----
+export async function deleteWaitingList(id: string) {
+  try {
+    const supabase = await createAdminClient()
+    const { error } = await supabase
+      .from('waiting_list')
+      .delete()
+      .eq('id', id)
+
+    if (error) return { error: error.message }
+
+    revalidatePath('/admin/waitinglist')
+    revalidatePath('/')
+    return { success: true }
+  } catch (err: unknown) {
+    return { error: (err as Error)?.message || 'Gagal menghapus data waiting list' }
+  }
+}
+

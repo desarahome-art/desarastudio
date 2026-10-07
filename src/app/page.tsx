@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic'
 const defaultSettings: Settings = {
   nama_studio: 'Desara Home Studio',
   wa_admin: '6281234567890',
-  rekening_bri: '1234-01-012345-53-6',
+  rekening_bni: '1234567890',
   nama_rekening: 'Desara Studio',
   dp_minimal: 100000,
   teks_sambutan: 'Selamat datang di Desara Home Studio, Pontianak 📸',
@@ -27,6 +27,7 @@ const defaultSettings: Settings = {
     'Navy',
     'Sage Green',
   ],
+  closed_dates: [],
 }
 
 async function getData() {
@@ -55,9 +56,17 @@ async function getData() {
     const mergedSettings: Settings = {
       ...defaultSettings,
       ...loadedSettings,
+      rekening_bni: String(
+        loadedSettings.rekening_bni ||
+        loadedSettings.rekening_bri ||
+        defaultSettings.rekening_bni
+      ),
       backgrounds: Array.isArray(loadedSettings.backgrounds)
         ? (loadedSettings.backgrounds as (string | BackgroundItem)[])
         : defaultSettings.backgrounds,
+      closed_dates: Array.isArray(loadedSettings.closed_dates)
+        ? (loadedSettings.closed_dates as import('@/types').ClosedDateItem[])
+        : [],
     }
 
     return {

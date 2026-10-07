@@ -4,8 +4,8 @@ import { useState, useRef } from 'react'
 import { updateSetting, uploadBackgroundImage } from '@/app/actions'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
-import { Save, Plus, X, Check, Upload, Trash2, Image as ImageIcon } from 'lucide-react'
-import type { Settings, BackgroundItem } from '@/types'
+import { Save, Plus, X, Check, Upload, Trash2, Image as ImageIcon, CalendarX, CalendarDays } from 'lucide-react'
+import type { Settings, BackgroundItem, ClosedDateItem } from '@/types'
 
 interface SettingsClientProps {
   settings: Settings
@@ -22,6 +22,11 @@ export function SettingsClient({ settings: initialSettings }: SettingsClientProp
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [targetBgIdx, setTargetBgIdx] = useState<number | null>(null)
 
+  // Kalender Close states
+  const [closeDateInput, setCloseDateInput] = useState('')
+  const [closeKetInput, setCloseKetInput] = useState('')
+  const [closeError, setCloseError] = useState('')
+
   const normalizedBackgrounds: BackgroundItem[] = (settings.backgrounds || []).map(bg => {
     if (typeof bg === 'string') {
       return { nama: bg, image_url: undefined }
@@ -35,6 +40,40 @@ export function SettingsClient({ settings: initialSettings }: SettingsClientProp
     setSaving(null)
     setSaved(key)
     setTimeout(() => setSaved(null), 2000)
+  }
+
+  // Tambah tanggal close / libur studio
+  const addClosedDate = () => {
+    if (!closeDateInput) {
+      setCloseError('Pilih tanggal yang ingin ditutup terlebih dahulu.')
+      return
+    }
+    if (!closeKetInput.trim()) {
+      setCloseError('Isi keterangan/alasan tanggal ditutup (cth. Libur Bersama, Renovasi).')
+      return
+    }
+
+    const currentList = Array.isArray(settings.closed_dates) ? settings.closed_dates : []
+    // Jika tanggal sudah ada, update keterangannya atau replace
+    const filtered = currentList.filter(item => item.tanggal !== closeDateInput)
+    const updated: ClosedDateItem[] = [
+      ...filtered,
+      { tanggal: closeDateInput, keterangan: closeKetInput.trim() },
+    ].sort((a, b) => a.tanggal.localeCompare(b.tanggal))
+
+    setSettings(s => ({ ...s, closed_dates: updated }))
+    save('closed_dates', updated)
+    setCloseDateInput('')
+    setCloseKetInput('')
+    setCloseError('')
+  }
+
+  // Hapus / Buka kembali tanggal close
+  const removeClosedDate = (tanggalToRemove: string) => {
+    const currentList = Array.isArray(settings.closed_dates) ? settings.closed_dates : []
+    const updated = currentList.filter(item => item.tanggal !== tanggalToRemove)
+    setSettings(s => ({ ...s, closed_dates: updated }))
+    save('closed_dates', updated)
   }
 
   // Tambah background baru
@@ -179,12 +218,12 @@ export function SettingsClient({ settings: initialSettings }: SettingsClientProp
           <div className="flex gap-3 items-end">
             <div className="flex-1">
               <Input
-                label="Nomor Rekening BRI"
-                value={settings.rekening_bri || ''}
-                onChange={e => setSettings(s => ({ ...s, rekening_bri: e.target.value }))}
+                label="Nomor Rekening BNI"
+                value={settings.rekening_bni || settings.rekening_bri || ''}
+                onChange={e => setSettings(s => ({ ...s, rekening_bni: e.target.value }))}
               />
             </div>
-            <SaveButton field="rekening_bri" />
+            <SaveButton field="rekening_bni" />
           </div>
           <div className="flex gap-3 items-end">
             <div className="flex-1">
@@ -340,6 +379,144 @@ export function SettingsClient({ settings: initialSettings }: SettingsClientProp
           <Button size="sm" onClick={addBackground}>
             <Plus className="w-4 h-4 mr-1" /> Tambah Background
           </Button>
+        </div>
+      </section>
+
+      {/* Kalender Close / Jadwal Libur Studio */}
+      <section className="rounded-2xl border-2 border-[rgb(var(--color-border))] bg-[rgb(var(--color-surface))] p-5 sm:p-6 shadow-sm">
+        <div className="flex items-start justify-between gap-3 mb-4">
+          <div className="flex items-center gap-2.5">
+            <div className="w-10 h-10 rounded-2xl bg-red-100 text-red-600 flex items-center justify-center font-bold shrink-0">
+              <CalendarX className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="font-heading font-semibold text-lg text-[rgb(var(--color-text))]">
+                Kalender Close / Jadwal Libur Studio
+              </h2>
+              <p className="text-xs text-[rgb(var(--color-text-muted))]">
+                Tutup tanggal tertentu di kalender beserta keterangan alasan tutup. Klien tidak dapat memilih tanggal ini saat booking.
+              </p>
+            </div>
+          </div>
+          <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-red-50 text-red-700 border border-red-200 shrink-0">
+            {(settings.closed_dates || []).length} Tanggal Tutup
+          </span>
+        </div>
+
+        {/* Form Tambah Tanggal Close */}
+        <div className="p-4 sm:p-5 rounded-2xl bg-[rgb(var(--color-cream)/0.5)] border-2 border-[rgb(var(--color-border))] mb-4">
+          <p className="text-xs font-heading font-bold text-[rgb(var(--color-forest))] mb-3 uppercase tracking-wider">
+            Tambah Tanggal Tutup
+          </p>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+            <div>
+              <label className="text-xs font-medium text-[rgb(var(--color-text-muted))] mb-1 block">
+                Pilih Tanggal Tutup:
+              </label>
+              <input
+                type="date"
+                value={closeDateInput}
+                onChange={e => {
+                  setCloseDateInput(e.target.value)
+                  setCloseError('')
+                }}
+                className="w-full px-3.5 py-2.5 rounded-xl border-2 border-[rgb(var(--color-border))] bg-[rgb(var(--color-surface))] text-sm focus:outline-none focus:border-[rgb(var(--color-forest))]"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs font-medium text-[rgb(var(--color-text-muted))] mb-1 block">
+                Keterangan / Alasan Tutup:
+              </label>
+              <input
+                type="text"
+                value={closeKetInput}
+                onChange={e => {
+                  setCloseKetInput(e.target.value)
+                  setCloseError('')
+                }}
+                placeholder="cth. Libur Bersama, Renovasi Studio, Jadwal Khusus"
+                onKeyDown={e => e.key === 'Enter' && addClosedDate()}
+                className="w-full px-3.5 py-2.5 rounded-xl border-2 border-[rgb(var(--color-border))] bg-[rgb(var(--color-surface))] text-sm focus:outline-none focus:border-[rgb(var(--color-forest))]"
+              />
+            </div>
+          </div>
+
+          {closeError && (
+            <p className="text-xs text-red-500 font-medium mb-3">{closeError}</p>
+          )}
+
+          <Button
+            size="sm"
+            onClick={addClosedDate}
+            loading={saving === 'closed_dates'}
+            className="w-full sm:w-auto"
+          >
+            <Plus className="w-4 h-4 mr-1" /> Simpan Tanggal Tutup
+          </Button>
+        </div>
+
+        {/* Daftar Tanggal Close */}
+        <div className="flex flex-col gap-2">
+          {(!settings.closed_dates || settings.closed_dates.length === 0) ? (
+            <div className="text-center py-6 px-4 bg-[rgb(var(--color-cream)/0.3)] rounded-xl border border-dashed border-[rgb(var(--color-border))]">
+              <CalendarDays className="w-8 h-8 text-[rgb(var(--color-text-muted))] mx-auto mb-1.5 opacity-40" />
+              <p className="text-xs text-[rgb(var(--color-text-muted))]">
+                Belum ada tanggal libur / close yang ditambahkan.
+              </p>
+            </div>
+          ) : (
+            settings.closed_dates
+              .slice()
+              .sort((a, b) => a.tanggal.localeCompare(b.tanggal))
+              .map(item => {
+                const dateObj = new Date(item.tanggal)
+                const dateFormatted = !isNaN(dateObj.getTime())
+                  ? dateObj.toLocaleDateString('id-ID', {
+                      weekday: 'long',
+                      day: 'numeric',
+                      month: 'long',
+                      year: 'numeric',
+                    })
+                  : item.tanggal
+
+                return (
+                  <div
+                    key={item.tanggal}
+                    className="flex items-center justify-between p-3.5 rounded-xl border-2 border-red-200 bg-red-50/40 text-sm"
+                  >
+                    <div className="flex items-start gap-2.5 min-w-0">
+                      <div className="w-8 h-8 rounded-lg bg-red-100 text-red-600 flex items-center justify-center shrink-0 mt-0.5">
+                        <CalendarX className="w-4 h-4" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-heading font-bold text-[rgb(var(--color-text))]">
+                            {dateFormatted}
+                          </span>
+                          <span className="text-[10px] font-bold px-2 py-0.2 bg-red-100 text-red-700 border border-red-200 rounded-md">
+                            TUTUP
+                          </span>
+                        </div>
+                        <p className="text-xs text-[rgb(var(--color-text-muted))] mt-0.5">
+                          Keterangan: <strong className="text-red-900">{item.keterangan || 'Studio Tutup'}</strong>
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => removeClosedDate(item.tanggal)}
+                      className="p-1.5 text-red-500 hover:text-red-700 hover:bg-red-100/60 rounded-lg transition-colors ml-2 shrink-0"
+                      title="Buka kembali tanggal ini (hapus jadwal close)"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                )
+              })
+          )}
         </div>
       </section>
 

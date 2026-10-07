@@ -37,7 +37,8 @@ export function Step6Pembayaran({
   const sisa = totalHarga - dpValue
 
   const copyRekening = async () => {
-    await navigator.clipboard.writeText(settings.rekening_bri)
+    const rek = settings.rekening_bni || settings.rekening_bri || ''
+    await navigator.clipboard.writeText(rek)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
@@ -103,18 +104,18 @@ export function Step6Pembayaran({
         </div>
       </div>
 
-      {/* Rekening Pembayaran BRI */}
+      {/* Rekening Pembayaran BNI */}
       <div className="rounded-3xl bg-gradient-to-br from-[rgb(var(--color-forest)/0.08)] to-[rgb(var(--color-forest)/0.03)] border-2 border-[rgb(var(--color-forest)/0.25)] p-5 mb-5 shadow-sm">
         <p className="text-xs font-heading font-bold uppercase tracking-wider text-[rgb(var(--color-forest))] mb-1">
           Rekening Pembayaran Studio
         </p>
         <p className="text-xs text-[rgb(var(--color-text-muted))] mb-2">
-          Transfer ke Bank BRI:
+          Transfer ke Bank BNI:
         </p>
         <div className="flex items-center justify-between bg-[rgb(var(--color-surface))] p-3.5 rounded-2xl border border-[rgb(var(--color-border))]">
           <div>
             <p className="font-heading font-black text-xl sm:text-2xl text-[rgb(var(--color-text))] tracking-wider">
-              {settings.rekening_bri}
+              {settings.rekening_bni || settings.rekening_bri}
             </p>
             <p className="text-xs text-[rgb(var(--color-text-muted))] mt-0.5">
               a.n. <strong className="text-[rgb(var(--color-text))]">{settings.nama_rekening}</strong>

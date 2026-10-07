@@ -19,13 +19,16 @@ import {
 import { id as localeId } from 'date-fns/locale'
 import { ChevronLeft, ChevronRight, Calendar as CalendarIcon, Check } from 'lucide-react'
 
+import type { ClosedDateItem } from '@/types'
+
 interface ModernDatePickerProps {
   value: string // YYYY-MM-DD
   onChange: (dateStr: string) => void
   error?: string
+  closedDates?: ClosedDateItem[]
 }
 
-export function ModernDatePicker({ value, onChange, error }: ModernDatePickerProps) {
+export function ModernDatePicker({ value, onChange, error, closedDates = [] }: ModernDatePickerProps) {
   const today = startOfDay(new Date())
   const selectedDate = value ? parseISO(value) : null
   const [currentMonth, setCurrentMonth] = useState(selectedDate || today)
@@ -123,22 +126,29 @@ export function ModernDatePicker({ value, onChange, error }: ModernDatePickerPro
         {/* Grid Tanggal */}
         <div className="grid grid-cols-7 gap-1 sm:gap-1.5">
           {days.map((d, i) => {
+            const dateStr = format(d, 'yyyy-MM-dd')
+            const closedInfo = closedDates.find(c => c.tanggal === dateStr)
+            const isClosed = Boolean(closedInfo)
             const isSelected = selectedDate ? isSameDay(d, selectedDate) : false
             const isCurrentMonth = isSameMonth(d, currentMonth)
             const isPast = isBefore(d, today)
             const isToday = isSameDay(d, today)
+            const isDisabled = isPast || !isCurrentMonth || isClosed
 
             return (
               <button
                 key={i}
                 type="button"
-                disabled={isPast || !isCurrentMonth}
-                onClick={() => onChange(format(d, 'yyyy-MM-dd'))}
+                disabled={isDisabled}
+                title={closedInfo ? `Studio Tutup: ${closedInfo.keterangan}` : undefined}
+                onClick={() => onChange(dateStr)}
                 className={`
                   relative h-10 sm:h-11 rounded-xl text-xs sm:text-sm font-medium flex flex-col items-center justify-center transition-all duration-150
                   ${!isCurrentMonth ? 'opacity-0 pointer-events-none' : ''}
                   ${
-                    isPast
+                    isClosed
+                      ? 'bg-rose-50 border border-rose-200/80 text-rose-500 cursor-not-allowed line-through opacity-80'
+                      : isPast
                       ? 'text-[rgb(var(--color-text-muted)/0.4)] cursor-not-allowed'
                       : isSelected
                       ? 'bg-[rgb(var(--color-forest))] text-white font-bold shadow-md scale-105'
@@ -147,10 +157,12 @@ export function ModernDatePicker({ value, onChange, error }: ModernDatePickerPro
                 `}
               >
                 <span>{format(d, 'd')}</span>
-                {/* Indikator Hari Ini */}
-                {isToday && !isSelected && (
+                {/* Indikator Hari Libur / Tutup */}
+                {isClosed && isCurrentMonth ? (
+                  <span className="w-1.5 h-1.5 rounded-full bg-rose-500 mt-0.5" />
+                ) : isToday && !isSelected ? (
                   <span className="w-1.5 h-1.5 rounded-full bg-[rgb(var(--color-blitz))] mt-0.5" />
-                )}
+                ) : null}
               </button>
             )
           })}
@@ -163,6 +175,29 @@ export function ModernDatePicker({ value, onChange, error }: ModernDatePickerPro
             <span className="font-heading font-semibold text-[rgb(var(--color-forest))]">
               {format(selectedDate, 'EEEE, d MMMM yyyy', { locale: localeId })}
             </span>
+          </div>
+        )}
+
+        {/* Closed Dates Information in this month */}
+        {closedDates.length > 0 && (
+          <div className="mt-3 pt-2.5 border-t border-dashed border-[rgb(var(--color-border))] flex flex-col gap-1 text-[11px] text-[rgb(var(--color-text-muted))]">
+            <div className="flex items-center gap-1.5 font-medium text-rose-600">
+              <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0" />
+              <span>Tanggal Berwarna Merah = Studio Tutup / Libur</span>
+            </div>
+            {closedDates
+              .filter(c => {
+                try {
+                  return isSameMonth(parseISO(c.tanggal), currentMonth)
+                } catch {
+                  return false
+                }
+              })
+              .map(c => (
+                <div key={c.tanggal} className="pl-3.5 text-xs text-rose-700 font-medium">
+                  • {c.tanggal}: <span className="font-normal italic">{c.keterangan || 'Studio Tutup'}</span>
+                </div>
+              ))}
           </div>
         )}
       </div>

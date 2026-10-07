@@ -10,6 +10,7 @@ import { Step5Form } from './Step5Form'
 import { Step6Pembayaran } from './Step6Pembayaran'
 import { Step7Sukses } from './Step7Sukses'
 import { WaitingListModal } from './WaitingListModal'
+import { PricelistModal } from './PricelistModal'
 import { submitBooking } from '@/app/actions'
 import type {
   Settings, Category, Package, Addon,
@@ -35,6 +36,7 @@ export function BookingWizard({
 }: BookingWizardProps) {
   const [step, setStep] = useState<Step>(1)
   const [showWaiting, setShowWaiting] = useState(false)
+  const [showPricelist, setShowPricelist] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -74,6 +76,17 @@ export function BookingWizard({
 
   const goTo = (s: Step) => setStep(s)
   const back = () => setStep(prev => (prev > 1 ? ((prev - 1) as Step) : prev))
+
+  const handleSelectPackageFromPricelist = (cat: Category, selectedPkg: Package) => {
+    setCategory(cat)
+    setPkg(selectedPkg)
+    setShowPricelist(false)
+    if (nama.trim()) {
+      goTo(5)
+    } else {
+      goTo(2)
+    }
+  }
 
   const handleStep5 = (data: typeof formData) => {
     setFormData(data)
@@ -175,13 +188,21 @@ export function BookingWizard({
             settings={settings}
             onNext={() => goTo(2)}
             onWaitingList={() => setShowWaiting(true)}
+            onPricelist={() => setShowPricelist(true)}
           />
         )}
         {step === 2 && (
           <Step2Nama
             key="step2"
             defaultValue={nama}
-            onNext={n => { setNama(n); goTo(3) }}
+            onNext={n => {
+              setNama(n)
+              if (category && pkg) {
+                goTo(5)
+              } else {
+                goTo(3)
+              }
+            }}
             onBack={back}
           />
         )}
@@ -241,6 +262,25 @@ export function BookingWizard({
             waAdmin={settings.wa_admin}
             namaStudio={settings.nama_studio}
             onReset={reset}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Pricelist modal */}
+      <AnimatePresence>
+        {showPricelist && (
+          <PricelistModal
+            categories={categories}
+            packages={packages}
+            addons={addons}
+            addonCategories={addonCategories}
+            namaStudio={settings.nama_studio}
+            onClose={() => setShowPricelist(false)}
+            onSelectPackage={handleSelectPackageFromPricelist}
+            onStartBooking={() => {
+              setShowPricelist(false)
+              goTo(2)
+            }}
           />
         )}
       </AnimatePresence>

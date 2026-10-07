@@ -6,7 +6,7 @@
 INSERT INTO settings (key, value) VALUES
   ('nama_studio',       '"Desara Home Studio"'),
   ('wa_admin',          '"6281234567890"'),
-  ('rekening_bri',      '"1234-01-012345-53-6"'),
+  ('rekening_bni',      '"1234567890"'),
   ('nama_rekening',     '"Desara Studio"'),
   ('dp_minimal',        '100000'),
   ('teks_sambutan',     '"Selamat datang di Desara Home Studio, Pontianak 📸"'),

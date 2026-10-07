@@ -2,7 +2,7 @@
 
 import { useState, useTransition, useMemo } from 'react'
 import { formatRupiah } from '@/lib/utils'
-import { updateBookingStatus, updateCetakStatus, getBuktiTransferSignedUrl } from '@/app/actions'
+import { updateBookingStatus, updateCetakStatus, getBuktiTransferSignedUrl, deleteBooking } from '@/app/actions'
 import { Button } from '@/components/ui/Button'
 import { AdminCalendarPicker } from './AdminCalendarPicker'
 import { RescheduleModal } from './RescheduleModal'
@@ -11,10 +11,10 @@ import {
   Search, MessageCircle, ChevronDown,
   ChevronUp, CheckCircle, XCircle, Flag,
   ExternalLink, Calendar, Clock, Filter,
-  CalendarDays, Layers, Printer
+  CalendarDays, Layers, Printer, Trash2
 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
-import type { Booking, BookingStatus, CetakStatus } from '@/types'
+import type { Booking, BookingStatus, CetakStatus, Package, Category } from '@/types'
 
 const statusLabel: Record<BookingStatus, string> = {
   pending: 'Menunggu',
@@ -73,6 +73,7 @@ function BookingRow({ booking, adminEmail, onRefresh, onOpenReschedule, onOpenWh
   const [isPending, startTransition] = useTransition()
   const [isCetakPending, startCetakTransition] = useTransition()
   const [loadingBukti, setLoadingBukti] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
 
   // Deteksi apakah booking ini ada cetak foto (dari paket snapshot atau add-on)
   const hasCetakPaket = Boolean(
@@ -95,6 +96,27 @@ function BookingRow({ booking, adminEmail, onRefresh, onOpenReschedule, onOpenWh
       await updateCetakStatus(booking.id, newCetakStatus, adminEmail)
       onRefresh()
     })
+  }
+
+  const handleDelete = async () => {
+    const confirmed = window.confirm(
+      `Apakah Anda yakin ingin MENGHAPUS PERMANEN data booking:\n- Klien: ${booking.nama_klien}\n- Kode: ${booking.kode}\n- Tanggal: ${booking.tanggal} ${booking.jam_mulai} WIB\n\nTindakan ini akan menghapus data secara permanen dan tidak dapat dibatalkan.`
+    )
+    if (!confirmed) return
+
+    setIsDeleting(true)
+    try {
+      const res = await deleteBooking(booking.id)
+      if (res.error) {
+        alert(`Gagal menghapus data booking: ${res.error}`)
+      } else {
+        onRefresh()
+      }
+    } catch (err: unknown) {
+      alert((err as Error)?.message || 'Terjadi kesalahan saat menghapus booking')
+    } finally {
+      setIsDeleting(false)
+    }
   }
 
   const handleViewBukti = async () => {
@@ -290,7 +312,7 @@ function BookingRow({ booking, adminEmail, onRefresh, onOpenReschedule, onOpenWh
               </Button>
             )}
 
-            {/* Tombol Modern Atur Ulang Tanggal & Waktu */}
+            {/* Tombol Modern Atur Ulang Tanggal, Jam & Paket */}
             <Button
               size="sm"
               variant="ghost"
@@ -298,7 +320,7 @@ function BookingRow({ booking, adminEmail, onRefresh, onOpenReschedule, onOpenWh
               className="border border-[rgb(var(--color-border))] hover:bg-[rgb(var(--color-forest)/0.1)] text-[rgb(var(--color-forest))]"
             >
               <Calendar className="w-3.5 h-3.5 mr-1" />
-              Ganti Tanggal / Jam
+              Edit Jadwal & Paket
             </Button>
 
             {booking.status === 'booking' && (
@@ -328,6 +350,19 @@ function BookingRow({ booking, adminEmail, onRefresh, onOpenReschedule, onOpenWh
             <Button
               size="sm"
               variant="ghost"
+              onClick={handleDelete}
+              loading={isDeleting}
+              disabled={isPending || isDeleting}
+              className="border border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300 flex items-center gap-1.5"
+              title="Hapus Permanen Data Booking Ini"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-red-500" />
+              Hapus
+            </Button>
+
+            <Button
+              size="sm"
+              variant="ghost"
               onClick={() => onOpenWhatsApp(booking)}
               className="ml-auto bg-[#25D366]/10 text-[#075E54] hover:bg-[#25D366]/20 font-bold border border-[#25D366]/30 flex items-center gap-1.5"
             >
@@ -343,10 +378,12 @@ function BookingRow({ booking, adminEmail, onRefresh, onOpenReschedule, onOpenWh
 
 interface BookingsClientProps {
   initialBookings: Booking[]
+  packages?: Package[]
+  categories?: Category[]
   adminEmail: string
 }
 
-export function BookingsClient({ initialBookings, adminEmail }: BookingsClientProps) {
+export function BookingsClient({ initialBookings, packages = [], categories = [], adminEmail }: BookingsClientProps) {
   const [search, setSearch] = useState('')
   const [filterStatus, setFilterStatus] = useState<BookingStatus | 'all'>('all')
   const [filterCetak, setFilterCetak] = useState<CetakStatus | 'all' | 'ada_cetak'>('all')
@@ -410,10 +447,12 @@ export function BookingsClient({ initialBookings, adminEmail }: BookingsClientPr
 
   return (
     <div>
-      {/* Reschedule Modal */}
+      {/* Reschedule & Edit Paket Modal */}
       {rescheduleTarget && (
         <RescheduleModal
           booking={rescheduleTarget}
+          packages={packages}
+          categories={categories}
           adminEmail={adminEmail}
           onClose={() => setRescheduleTarget(null)}
           onSuccess={() => router.refresh()}

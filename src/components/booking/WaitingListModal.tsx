@@ -142,8 +142,9 @@ export function WaitingListModal({
   ].filter(g => g.items.length > 0)
 
   const copyRekening = async () => {
-    if (settings?.rekening_bri) {
-      await navigator.clipboard.writeText(settings.rekening_bri)
+    const rek = settings?.rekening_bni || settings?.rekening_bri || ''
+    if (rek) {
+      await navigator.clipboard.writeText(rek)
       setCopiedRekening(true)
       setTimeout(() => setCopiedRekening(false), 2000)
     }
@@ -489,6 +490,7 @@ export function WaitingListModal({
                       setTanggal(newDate)
                       setErrors(prev => ({ ...prev, tanggal: '', jamIngin: '' }))
                     }}
+                    closedDates={settings?.closed_dates || []}
                   />
                   {errors.tanggal && (
                     <p className="text-xs text-red-500 font-medium mt-1">{errors.tanggal}</p>
@@ -654,9 +656,9 @@ export function WaitingListModal({
                   {/* Box Rekening Bank */}
                   <div className="rounded-2xl bg-[rgb(var(--color-forest)/0.06)] border border-[rgb(var(--color-forest)/0.2)] p-3.5 flex items-center justify-between">
                     <div>
-                      <p className="text-[11px] text-[rgb(var(--color-text-muted))]">Transfer Bank BRI:</p>
+                      <p className="text-[11px] text-[rgb(var(--color-text-muted))]">Transfer Bank BNI:</p>
                       <p className="font-heading font-bold text-base text-[rgb(var(--color-text))]">
-                        {settings?.rekening_bri || '1234-01-012345-53-6'}
+                        {settings?.rekening_bni || settings?.rekening_bri || '1234567890'}
                       </p>
                       <p className="text-[11px] text-[rgb(var(--color-text-muted))]">
                         a.n. {settings?.nama_rekening || 'Desara Studio'}
