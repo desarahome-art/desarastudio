@@ -14,7 +14,7 @@ import { PricelistModal } from './PricelistModal'
 import { submitBooking } from '@/app/actions'
 import type {
   Settings, Category, Package, Addon,
-  BookingFormAddon, Booking, BookingAddon
+  BookingFormAddon, Booking, BookingAddon, WisudaEvent
 } from '@/types'
 
 type Step = 1 | 2 | 3 | 4 | 5 | 6 | 7
@@ -25,6 +25,7 @@ interface BookingWizardProps {
   packages: Package[]
   addons: Addon[]
   addonCategories: { addon_id: string; category_id: string }[]
+  wisudaEvents: WisudaEvent[]
 }
 
 export function BookingWizard({
@@ -33,6 +34,7 @@ export function BookingWizard({
   packages,
   addons,
   addonCategories,
+  wisudaEvents,
 }: BookingWizardProps) {
   const [step, setStep] = useState<Step>(1)
   const [showWaiting, setShowWaiting] = useState(false)
@@ -290,6 +292,8 @@ export function BookingWizard({
         {showWaiting && (
           <WaitingListModal
             categories={categories}
+            packages={packages}
+            wisudaEvents={wisudaEvents}
             waAdmin={settings.wa_admin}
             namaStudio={settings.nama_studio}
             settings={settings}

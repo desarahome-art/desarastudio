@@ -163,73 +163,94 @@ export async function submitWaitingList(data: {
   wa: string
   category_id: string
   category_nama: string
+  package_nama?: string
   kampus?: string
-  tanggal_ingin: string
+  acara_id?: string
+  acara_nama?: string
+  tanggal_ingin?: string
   jam_ingin: string
   catatan?: string
   dp_minimal?: number
 }) {
   const supabase = await createAdminClient()
 
-  if (!data.tanggal_ingin) {
-    return { error: 'Tanggal perkiraan sesi wajib dipilih.' }
-  }
   if (!data.jam_ingin) {
     return { error: 'Jam sesi waiting list wajib dipilih.' }
   }
 
-  // 0. Cek apakah studio tutup pada tanggal tersebut
-  const closedInfo = await checkIsDateClosed(supabase, data.tanggal_ingin)
-  if (closedInfo) {
-    return {
-      error: `Studio tutup pada tanggal ${data.tanggal_ingin}${closedInfo.keterangan ? ` (${closedInfo.keterangan})` : ''}. Silakan pilih tanggal lain.`,
+  // Jika menggunakan acara wisuda (mode baru)
+  if (data.acara_id) {
+    // Cek apakah jam sudah diambil orang lain di acara yang SAMA
+    const { data: existingWaiting } = await supabase
+      .from('waiting_list')
+      .select('catatan, acara_id')
+      .eq('acara_id', data.acara_id)
+
+    const isAlreadyWaiting = (existingWaiting || []).some(w => {
+      const parsed = parseWaitingListInfo(w.catatan)
+      return parsed.jam === data.jam_ingin
+    })
+
+    if (isAlreadyWaiting) {
+      return {
+        error: `Jam ${data.jam_ingin} WIB untuk acara ini sudah dipilih client lain dari acara yang sama. Silakan pilih jam lain.`,
+      }
     }
-  }
-
-  // 1. Cek apakah jam sudah ada yang waiting list pada tanggal tersebut
-  const { data: existingWaiting } = await supabase
-    .from('waiting_list')
-    .select('catatan')
-    .eq('tanggal_ingin', data.tanggal_ingin)
-
-  const isAlreadyWaiting = (existingWaiting || []).some(w => {
-    const parsed = parseWaitingListInfo(w.catatan)
-    return parsed.jam === data.jam_ingin
-  })
-
-  if (isAlreadyWaiting) {
-    return {
-      error: `Jam ${data.jam_ingin} WIB pada tanggal ini sudah dipilih oleh client waiting list lain. Silakan pilih jam lain.`,
+  } else if (data.tanggal_ingin) {
+    // Mode lama: cek per tanggal
+    const closedInfo = await checkIsDateClosed(supabase, data.tanggal_ingin)
+    if (closedInfo) {
+      return {
+        error: `Studio tutup pada tanggal ${data.tanggal_ingin}${closedInfo.keterangan ? ` (${closedInfo.keterangan})` : ''}. Silakan pilih tanggal lain.`,
+      }
     }
-  }
 
-  // 2. Cek apakah jam sudah ter-booking
-  const { data: existingBookings } = await supabase
-    .from('bookings')
-    .select('jam_mulai, durasi_total')
-    .eq('tanggal', data.tanggal_ingin)
-    .in('status', ['pending', 'booking'])
+    const { data: existingWaiting } = await supabase
+      .from('waiting_list')
+      .select('catatan')
+      .eq('tanggal_ingin', data.tanggal_ingin)
 
-  if (
-    existingBookings &&
-    isSlotBlocked(data.jam_ingin, 30, existingBookings.map(b => ({
-      jam_mulai: b.jam_mulai ? String(b.jam_mulai).slice(0, 5) : '00:00',
-      durasi_total: Number(b.durasi_total) || 30,
-    })))
-  ) {
-    return {
-      error: `Jam ${data.jam_ingin} WIB pada tanggal ini sudah dipesan (booking). Silakan pilih jam lain.`,
+    const isAlreadyWaiting = (existingWaiting || []).some(w => {
+      const parsed = parseWaitingListInfo(w.catatan)
+      return parsed.jam === data.jam_ingin
+    })
+
+    if (isAlreadyWaiting) {
+      return {
+        error: `Jam ${data.jam_ingin} WIB pada tanggal ini sudah dipilih oleh client waiting list lain. Silakan pilih jam lain.`,
+      }
     }
+
+    const { data: existingBookings } = await supabase
+      .from('bookings')
+      .select('jam_mulai, durasi_total')
+      .eq('tanggal', data.tanggal_ingin)
+      .in('status', ['pending', 'booking'])
+
+    if (
+      existingBookings &&
+      isSlotBlocked(data.jam_ingin, 30, existingBookings.map(b => ({
+        jam_mulai: b.jam_mulai ? String(b.jam_mulai).slice(0, 5) : '00:00',
+        durasi_total: Number(b.durasi_total) || 30,
+      })))
+    ) {
+      return {
+        error: `Jam ${data.jam_ingin} WIB pada tanggal ini sudah dipesan (booking). Silakan pilih jam lain.`,
+      }
+    }
+  } else {
+    return { error: 'Pilih acara wisuda atau tanggal sesi foto.' }
   }
 
   const dpAmount = data.dp_minimal || 100000
 
-  // Format catatan lengkap dan terstruktur
+  // Format catatan lengkap
   const detailList: string[] = [
     `[Jam: ${data.jam_ingin}]`,
     `DP: Rp ${dpAmount.toLocaleString('id-ID')} (via WA)`,
   ]
   if (data.kampus?.trim()) detailList.push(`Kampus/Instansi: ${data.kampus.trim()}`)
+  if (data.package_nama?.trim()) detailList.push(`Paket: ${data.package_nama.trim()}`)
   if (data.catatan?.trim()) detailList.push(`Catatan: ${data.catatan.trim()}`)
 
   const combinedCatatan = detailList.join(' | ')
@@ -239,7 +260,10 @@ export async function submitWaitingList(data: {
     wa: data.wa.trim(),
     category_id: data.category_id,
     category_nama: data.category_nama,
-    tanggal_ingin: data.tanggal_ingin,
+    package_nama: data.package_nama?.trim() || null,
+    acara_id: data.acara_id || null,
+    acara_nama: data.acara_nama?.trim() || null,
+    tanggal_ingin: data.tanggal_ingin || null,
     catatan: combinedCatatan,
     sudah_dihubungi: false,
   }
@@ -250,7 +274,7 @@ export async function submitWaitingList(data: {
   return { success: true }
 }
 
-// ---- Public: get waiting list slot availability status ----
+// ---- Public: get waiting list slot availability status (per tanggal, legacy) ----
 export async function getWaitingListSlotStatus(
   tanggal: string,
   jamBuka: string = '08:00',
@@ -315,9 +339,117 @@ export async function getWaitingListSlotStatus(
   }
 }
 
+// ---- Public: get slot status per acara wisuda ----
+export async function getWisudaSlotStatus(
+  acaraId: string,
+  jamBuka: string = '08:00',
+  jamTutup: string = '20:00',
+  intervalMenit: number = 30
+): Promise<{
+  allSlots: string[]
+  takenSlots: string[]   // jam yang sudah diambil client waiting list di acara ini
+}> {
+  try {
+    const supabase = await createAdminClient()
+    const intv = Number(intervalMenit) || 30
+    const allSlots = generateTimeSlots(jamBuka || '08:00', jamTutup || '20:00', intv)
+
+    // Ambil semua waiting list dengan acara_id yang sama
+    const { data: waitingListItems } = await supabase
+      .from('waiting_list')
+      .select('catatan')
+      .eq('acara_id', acaraId)
+
+    const takenSlots: string[] = []
+    for (const item of waitingListItems || []) {
+      const parsed = parseWaitingListInfo(item.catatan)
+      if (parsed.jam && allSlots.includes(parsed.jam)) {
+        if (!takenSlots.includes(parsed.jam)) {
+          takenSlots.push(parsed.jam)
+        }
+      }
+    }
+
+    return { allSlots, takenSlots }
+  } catch (err) {
+    console.error('Error fetching wisuda slot status:', err)
+    return { allSlots: [], takenSlots: [] }
+  }
+}
+
+// ---- Public: get all wisuda events ----
+export async function getWisudaEvents(): Promise<{
+  events: Array<{ id: string; nama: string; kampus: string; keterangan: string | null; aktif: boolean; created_at: string }>
+  error?: string
+}> {
+  try {
+    const supabase = await createAdminClient()
+    const { data, error } = await supabase
+      .from('wisuda_events')
+      .select('*')
+      .order('created_at', { ascending: false })
+    if (error) return { events: [], error: error.message }
+    return { events: data || [] }
+  } catch (err: unknown) {
+    return { events: [], error: (err as Error)?.message || 'Gagal mengambil data acara wisuda' }
+  }
+}
+
+// ---- Admin: create wisuda event ----
+export async function createWisudaEvent(data: {
+  nama: string
+  kampus: string
+  keterangan?: string
+  aktif?: boolean
+}) {
+  const supabase = await createAdminClient()
+  const { error } = await supabase.from('wisuda_events').insert({
+    nama: data.nama.trim(),
+    kampus: data.kampus.trim(),
+    keterangan: data.keterangan?.trim() || null,
+    aktif: data.aktif !== false,
+  })
+  if (error) return { error: error.message }
+  revalidatePath('/admin/waitinglist')
+  revalidatePath('/')
+  return { success: true }
+}
+
+// ---- Admin: update wisuda event ----
+export async function updateWisudaEvent(id: string, data: {
+  nama?: string
+  kampus?: string
+  keterangan?: string | null
+  aktif?: boolean
+}) {
+  const supabase = await createAdminClient()
+  const updates: Record<string, unknown> = {}
+  if (data.nama !== undefined) updates.nama = data.nama.trim()
+  if (data.kampus !== undefined) updates.kampus = data.kampus.trim()
+  if ('keterangan' in data) updates.keterangan = data.keterangan?.trim() || null
+  if (data.aktif !== undefined) updates.aktif = data.aktif
+
+  const { error } = await supabase.from('wisuda_events').update(updates).eq('id', id)
+  if (error) return { error: error.message }
+  revalidatePath('/admin/waitinglist')
+  revalidatePath('/')
+  return { success: true }
+}
+
+// ---- Admin: delete wisuda event ----
+export async function deleteWisudaEvent(id: string) {
+  const supabase = await createAdminClient()
+  const { error } = await supabase.from('wisuda_events').delete().eq('id', id)
+  if (error) return { error: error.message }
+  revalidatePath('/admin/waitinglist')
+  revalidatePath('/')
+  return { success: true }
+}
+
 // ---- Admin: Convert waiting list directly to booking ----
 export async function convertWaitingListToBooking(
   waitingListId: string,
+  tanggalFoto: string,
   adminEmail?: string
 ) {
   const supabase = await createAdminClient()
@@ -333,6 +465,10 @@ export async function convertWaitingListToBooking(
     return { error: 'Data waiting list tidak ditemukan.' }
   }
 
+  if (!tanggalFoto) {
+    return { error: 'Tanggal foto wajib dipilih oleh admin.' }
+  }
+
   const parsedInfo = parseWaitingListInfo(wl.catatan)
 
   // Cek apakah sudah pernah dikonversi
@@ -340,7 +476,15 @@ export async function convertWaitingListToBooking(
     return { error: `Waiting list ini sudah pernah dikonversi ke booking dengan kode ${parsedInfo.bookingKode}.` }
   }
 
-  // 2. Ambil paket default untuk kategori ini
+  // Cek apakah studio tutup pada tanggal tersebut
+  const closedInfo = await checkIsDateClosed(supabase, tanggalFoto)
+  if (closedInfo) {
+    return {
+      error: `Studio tutup pada tanggal ${tanggalFoto}${closedInfo.keterangan ? ` (${closedInfo.keterangan})` : ''}. Pilih tanggal lain.`,
+    }
+  }
+
+  // 2. Ambil paket untuk kategori ini — prioritaskan package_nama dari waiting list jika ada
   const { data: packages } = await supabase
     .from('packages')
     .select('*')
@@ -348,33 +492,40 @@ export async function convertWaitingListToBooking(
     .eq('aktif', true)
     .order('urutan', { ascending: true })
 
-  let selectedPkg: Package
-  if (packages && packages.length > 0) {
-    selectedPkg = packages[0]
-  } else {
-    selectedPkg = {
-      id: '00000000-0000-0000-0000-000000000000',
-      category_id: wl.category_id || '',
-      nama: 'Paket Standard (Waiting List)',
-      harga: 100000,
-      durasi_menit: 30,
-      jumlah_pilihan_background: 1,
-      maks_orang: 2,
-      cetak_ukuran: null,
-      cetak_jumlah: null,
-      jumlah_foto_edit: null,
-      bonus: null,
-      urutan: 1,
-      aktif: true,
-      created_at: new Date().toISOString(),
-    }
+  // Coba cocokkan package_nama yang dipilih client di waiting list
+  let selectedPkg: Package | undefined
+  if (wl.package_nama && packages && packages.length > 0) {
+    selectedPkg = packages.find(
+      (p: Package) => p.nama.toLowerCase() === wl.package_nama.toLowerCase()
+    )
+  }
+  // Fallback ke paket pertama jika tidak ditemukan
+  if (!selectedPkg) {
+    selectedPkg = packages && packages.length > 0
+      ? packages[0]
+      : {
+          id: '00000000-0000-0000-0000-000000000000',
+          category_id: wl.category_id || '',
+          nama: 'Paket Standard (Waiting List)',
+          harga: 100000,
+          durasi_menit: 30,
+          jumlah_pilihan_background: 1,
+          maks_orang: 2,
+          cetak_ukuran: null,
+          cetak_jumlah: null,
+          jumlah_foto_edit: null,
+          bonus: null,
+          urutan: 1,
+          aktif: true,
+          created_at: new Date().toISOString(),
+        }
   }
 
-  const tanggal = wl.tanggal_ingin || new Date().toISOString().slice(0, 10)
+  const tanggal = tanggalFoto
   const jamMulai = parsedInfo.jam || '09:00'
-  const durasiTotal = selectedPkg.durasi_menit || 30
+  const durasiTotal = selectedPkg!.durasi_menit || 30
   const dpDibayar = 100000
-  const totalHarga = selectedPkg.harga || 100000
+  const totalHarga = selectedPkg!.harga || 100000
 
   // 3. Masukkan ke tabel bookings dengan status 'pending' (Menunggu)
   const { data: newBooking, error: insertError } = await supabase
@@ -389,10 +540,10 @@ export async function convertWaitingListToBooking(
       durasi_total: durasiTotal,
       category_id: wl.category_id,
       category_nama: wl.category_nama,
-      package_id: selectedPkg.id,
-      package_nama: selectedPkg.nama,
-      package_harga: selectedPkg.harga,
-      package_snapshot: selectedPkg,
+      package_id: selectedPkg!.id,
+      package_nama: selectedPkg!.nama,
+      package_harga: selectedPkg!.harga,
+      package_snapshot: selectedPkg!,
       total_harga: totalHarga,
       dp_dibayar: dpDibayar,
       catatan: `[Dikonversi dari Waiting List] ${wl.catatan || ''}`.trim(),

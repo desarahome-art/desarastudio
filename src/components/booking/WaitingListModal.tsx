@@ -4,8 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/Button'
 import { Input, Textarea } from '@/components/ui/Input'
-import { submitWaitingList, getWaitingListSlotStatus } from '@/app/actions'
-import { ModernDatePicker } from './ModernDatePicker'
+import { submitWaitingList, getWisudaSlotStatus } from '@/app/actions'
 import { formatRupiah, timeToMinutes } from '@/lib/utils'
 import {
   X,
@@ -15,7 +14,6 @@ import {
   User,
   Phone,
   Tag,
-  CalendarDays,
   Check,
   ArrowRight,
   Clock,
@@ -27,11 +25,16 @@ import {
   Lock,
   CreditCard,
   AlertCircle,
+  GraduationCap,
+  Package as PackageIcon,
+  ChevronRight,
 } from 'lucide-react'
-import type { Category, Settings } from '@/types'
+import type { Category, Package, Settings, WisudaEvent } from '@/types'
 
 interface WaitingListModalProps {
   categories: Category[]
+  packages: Package[]
+  wisudaEvents: WisudaEvent[]
   waAdmin: string
   namaStudio: string
   settings?: Settings
@@ -40,26 +43,29 @@ interface WaitingListModalProps {
 
 export function WaitingListModal({
   categories,
+  packages,
+  wisudaEvents,
   waAdmin,
   namaStudio,
   settings,
   onClose,
 }: WaitingListModalProps) {
+  // Form state
   const [nama, setNama] = useState('')
   const [wa, setWa] = useState('')
   const [kampus, setKampus] = useState('')
   const [categoryId, setCategoryId] = useState('')
-  const [tanggal, setTanggal] = useState('')
+  const [packageId, setPackageId] = useState('')
+  const [acaraId, setAcaraId] = useState('')
   const [jamIngin, setJamIngin] = useState('')
   const [catatan, setCatatan] = useState('')
 
-  // Slot checking state
+  // Slot state
   const [loadingSlots, setLoadingSlots] = useState(false)
   const [allSlots, setAllSlots] = useState<string[]>([])
-  const [bookedSlots, setBookedSlots] = useState<string[]>([])
-  const [waitingListSlots, setWaitingListSlots] = useState<string[]>([])
+  const [takenSlots, setTakenSlots] = useState<string[]>([])
 
-  // DP & submit states
+  // UI state
   const [copiedRekening, setCopiedRekening] = useState(false)
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(false)
@@ -68,72 +74,63 @@ export function WaitingListModal({
   const dpMinimal = settings?.dp_minimal || 100000
   const activeCategories = categories.filter(c => c.aktif).sort((a, b) => a.urutan - b.urutan)
   const selectedCategory = activeCategories.find(c => c.id === categoryId)
+  const activeWisudaEvents = wisudaEvents.filter(e => e.aktif)
 
-  // Fetch slot status saat tanggal berubah
-  const fetchSlotStatus = useCallback(async (selectedDate: string) => {
-    if (!selectedDate) {
+  // Paket foto yang tersedia untuk kategori terpilih
+  const categoryPackages = categoryId
+    ? packages.filter(p => p.category_id === categoryId && p.aktif).sort((a, b) => a.urutan - b.urutan)
+    : []
+  const selectedPackage = categoryPackages.find(p => p.id === packageId)
+  const selectedAcara = activeWisudaEvents.find(e => e.id === acaraId)
+
+  // Fetch slots saat acara berubah
+  const fetchSlotStatus = useCallback(async (selectedAcaraId: string) => {
+    if (!selectedAcaraId) {
       setAllSlots([])
-      setBookedSlots([])
-      setWaitingListSlots([])
+      setTakenSlots([])
       return
     }
     setLoadingSlots(true)
     try {
-      const res = await getWaitingListSlotStatus(
-        selectedDate,
+      const res = await getWisudaSlotStatus(
+        selectedAcaraId,
         settings?.jam_buka || '08:00',
         settings?.jam_tutup || '20:00',
         settings?.slot_interval || 30
       )
       setAllSlots(res.allSlots || [])
-      setBookedSlots(res.bookedSlots || [])
-      setWaitingListSlots(res.waitingListSlots || [])
+      setTakenSlots(res.takenSlots || [])
 
-      // Jika jam yang dipilih sebelumnya ternyata sekarang terblokir, reset
-      if (jamIngin && (res.waitingListSlots.includes(jamIngin) || res.bookedSlots.includes(jamIngin))) {
+      // Reset jam jika sudah diambil
+      if (jamIngin && res.takenSlots.includes(jamIngin)) {
         setJamIngin('')
       }
     } catch (err) {
-      console.error('Gagal memuat status slot waiting list:', err)
+      console.error('Gagal memuat status slot wisuda:', err)
     } finally {
       setLoadingSlots(false)
     }
   }, [settings?.jam_buka, settings?.jam_tutup, settings?.slot_interval, jamIngin])
 
   useEffect(() => {
-    if (tanggal) {
-      fetchSlotStatus(tanggal)
+    if (acaraId) {
+      fetchSlotStatus(acaraId)
     } else {
       setAllSlots([])
-      setBookedSlots([])
-      setWaitingListSlots([])
+      setTakenSlots([])
       setJamIngin('')
     }
-  }, [tanggal, fetchSlotStatus])
+  }, [acaraId, fetchSlotStatus])
 
-  // Pengelompokan slot jam (sama persis dengan Form Booking TimeSlotSelector)
-  const pagiSlots = allSlots.filter(s => {
-    try {
-      return timeToMinutes(s) < 12 * 60
-    } catch {
-      return false
-    }
-  })
-  const siangSlots = allSlots.filter(s => {
-    try {
-      const m = timeToMinutes(s)
-      return m >= 12 * 60 && m < 15 * 60
-    } catch {
-      return false
-    }
-  })
-  const soreMalamSlots = allSlots.filter(s => {
-    try {
-      return timeToMinutes(s) >= 15 * 60
-    } catch {
-      return false
-    }
-  })
+  // Reset packageId jika kategori berubah
+  useEffect(() => {
+    setPackageId('')
+  }, [categoryId])
+
+  // Pengelompokan slot jam
+  const pagiSlots = allSlots.filter(s => { try { return timeToMinutes(s) < 12 * 60 } catch { return false } })
+  const siangSlots = allSlots.filter(s => { try { const m = timeToMinutes(s); return m >= 12 * 60 && m < 15 * 60 } catch { return false } })
+  const soreMalamSlots = allSlots.filter(s => { try { return timeToMinutes(s) >= 15 * 60 } catch { return false } })
 
   const sessionGroups = [
     { title: 'Pagi', icon: Sunrise, items: pagiSlots, sub: '08:00 - 11:30' },
@@ -152,10 +149,11 @@ export function WaitingListModal({
 
   const validate = () => {
     const e: Record<string, string> = {}
+    if (!categoryId) e.category = 'Pilih kategori sesi foto terlebih dahulu'
+    if (!packageId) e.package = 'Pilih paket foto yang diinginkan'
     if (!nama.trim()) e.nama = 'Nama lengkap wajib diisi'
     if (!wa.trim()) e.wa = 'Nomor WhatsApp aktif wajib diisi'
-    if (!categoryId) e.category = 'Pilih kategori sesi foto terlebih dahulu'
-    if (!tanggal) e.tanggal = 'Pilih perkiraan tanggal sesi foto'
+    if (!acaraId) e.acara = 'Pilih acara wisuda terlebih dahulu'
     if (!jamIngin) e.jamIngin = 'Pilih jam sesi foto yang diinginkan'
     setErrors(e)
     return Object.keys(e).length === 0
@@ -171,7 +169,9 @@ export function WaitingListModal({
       kampus: kampus.trim() || undefined,
       category_id: categoryId,
       category_nama: selectedCategory!.nama,
-      tanggal_ingin: tanggal,
+      package_nama: selectedPackage?.nama,
+      acara_id: acaraId,
+      acara_nama: selectedAcara?.nama,
       jam_ingin: jamIngin,
       catatan: catatan.trim() || undefined,
       dp_minimal: dpMinimal,
@@ -184,13 +184,14 @@ export function WaitingListModal({
     }
   }
 
-  // Pesan WhatsApp otomatis lengkap
+  // Pesan WhatsApp otomatis
   const detailMsg = [
     `Halo Admin ${namaStudio}, saya ingin konfirmasi pendaftaran waiting list:`,
     `• Nama: *${nama.trim()}*`,
     kampus.trim() ? `• Kampus/Instansi: *${kampus.trim()}*` : null,
     `• Kategori: *${selectedCategory?.nama || ''}*`,
-    tanggal ? `• Tanggal: *${new Date(tanggal).toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}*` : null,
+    selectedPackage ? `• Paket: *${selectedPackage.nama}*` : null,
+    selectedAcara ? `• Acara Wisuda: *${selectedAcara.nama}*` : null,
     jamIngin ? `• Jam: *${jamIngin} WIB*` : null,
     `• DP Waiting List: *${formatRupiah(dpMinimal)}*`,
     catatan.trim() ? `• Catatan: ${catatan.trim()}` : null,
@@ -216,7 +217,7 @@ export function WaitingListModal({
         transition={{ duration: 0.35, ease: [0.34, 1.2, 0.64, 1] }}
         className="w-full max-w-xl bg-[rgb(var(--color-cream))] rounded-3xl shadow-2xl border-2 border-[rgb(var(--color-border))] overflow-hidden my-auto"
       >
-        {/* Top Header Card */}
+        {/* Top Header */}
         <div className="relative px-6 pt-6 pb-5 bg-[rgb(var(--color-forest))] text-white border-b-4 border-[rgb(var(--color-blitz))]">
           <button
             onClick={onClose}
@@ -227,22 +228,20 @@ export function WaitingListModal({
           </button>
 
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl bg-[rgb(var(--color-blitz))] text-black flex items-center justify-center shadow-lg font-heading font-black">
+            <div className="w-12 h-12 rounded-2xl bg-[rgb(var(--color-blitz))] text-black flex items-center justify-center shadow-lg">
               <ClipboardList className="w-6 h-6 text-[rgb(var(--color-forest))]" />
             </div>
             <div>
-              <div className="flex items-center gap-1.5">
-                <span className="text-[10px] font-heading font-bold uppercase tracking-wider text-[rgb(var(--color-blitz))] bg-white/10 px-2 py-0.5 rounded-full">
-                  Prioritas Antrean
-                </span>
-              </div>
+              <span className="text-[10px] font-heading font-bold uppercase tracking-wider text-[rgb(var(--color-blitz))] bg-white/10 px-2 py-0.5 rounded-full">
+                Prioritas Antrean
+              </span>
               <h2 className="font-heading font-bold text-xl sm:text-2xl text-white leading-tight mt-0.5">
                 Daftar Waiting List
               </h2>
             </div>
           </div>
           <p className="text-white/80 text-xs sm:text-sm mt-2.5 leading-relaxed">
-            Kunci slot jam pilihan Anda. Waiting list wajib DP minimal {formatRupiah(dpMinimal)} dan bukti transfer dikirim via WhatsApp.
+            Kunci jam sesi foto Anda untuk acara wisuda. DP minimal {formatRupiah(dpMinimal)} via WhatsApp.
           </p>
         </div>
 
@@ -272,22 +271,22 @@ export function WaitingListModal({
                     Waiting List Terdaftar!
                   </h3>
                   <p className="text-xs sm:text-sm text-[rgb(var(--color-text-muted))] max-w-sm mx-auto leading-relaxed">
-                    Data antrean Anda berhasil disimpan. Silakan kirimkan bukti transfer DP via WhatsApp ke Admin agar nomor antrean Anda segera diverifikasi.
+                    Data antrean Anda berhasil disimpan. Kirimkan bukti transfer DP via WhatsApp ke Admin agar slot jam dikonfirmasi.
                   </p>
                 </div>
 
-                {/* Box Petunjuk Wajib Kirim Bukti DP */}
+                {/* Petunjuk Kirim Bukti DP */}
                 <div className="w-full rounded-2xl bg-emerald-50 border-2 border-emerald-300 p-4 text-left">
                   <div className="flex items-center gap-2 mb-1.5 text-emerald-800 font-heading font-bold text-sm">
                     <MessageCircle className="w-4 h-4 text-emerald-600" />
                     Langkah Terakhir: Kirim Bukti Transfer DP
                   </div>
                   <p className="text-xs text-emerald-700 leading-relaxed">
-                    Kirimkan bukti transfer pembayaran DP sebesar <strong>{formatRupiah(dpMinimal)}</strong> langsung ke WhatsApp Admin melalui tombol di bawah ini.
+                    Kirimkan bukti transfer DP sebesar <strong>{formatRupiah(dpMinimal)}</strong> via WhatsApp agar admin memverifikasi antrean Anda.
                   </p>
                 </div>
 
-                {/* Badge Konfirmasi Ringkasan */}
+                {/* Ringkasan */}
                 <div className="w-full rounded-2xl bg-[rgb(var(--color-surface))] border-2 border-[rgb(var(--color-border))] p-4 text-left shadow-sm">
                   <p className="text-xs font-heading font-bold uppercase tracking-wider text-[rgb(var(--color-forest))] mb-2 pb-2 border-b border-[rgb(var(--color-border))]">
                     Ringkasan Waiting List
@@ -315,28 +314,31 @@ export function WaitingListModal({
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-[rgb(var(--color-text-muted))] flex items-center gap-2">
-                        <Tag className="w-3.5 h-3.5 text-[rgb(var(--color-forest))]" /> Kategori Sesi
+                        <Tag className="w-3.5 h-3.5 text-[rgb(var(--color-forest))]" /> Kategori
                       </span>
                       <span className="font-semibold text-[rgb(var(--color-forest))] bg-[rgb(var(--color-forest)/0.1)] px-2 py-0.5 rounded-md">
                         {selectedCategory?.nama}
                       </span>
                     </div>
+                    {selectedPackage && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-[rgb(var(--color-text-muted))] flex items-center gap-2">
+                          <PackageIcon className="w-3.5 h-3.5 text-[rgb(var(--color-forest))]" /> Paket Foto
+                        </span>
+                        <span className="font-semibold text-[rgb(var(--color-text))]">{selectedPackage.nama}</span>
+                      </div>
+                    )}
+                    {selectedAcara && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-[rgb(var(--color-text-muted))] flex items-center gap-2">
+                          <GraduationCap className="w-3.5 h-3.5 text-[rgb(var(--color-forest))]" /> Acara Wisuda
+                        </span>
+                        <span className="font-semibold text-[rgb(var(--color-text))] text-right max-w-[55%]">{selectedAcara.nama}</span>
+                      </div>
+                    )}
                     <div className="flex items-center justify-between">
                       <span className="text-[rgb(var(--color-text-muted))] flex items-center gap-2">
-                        <CalendarDays className="w-3.5 h-3.5 text-[rgb(var(--color-forest))]" /> Tanggal
-                      </span>
-                      <span className="font-semibold text-[rgb(var(--color-text))]">
-                        {new Date(tanggal).toLocaleDateString('id-ID', {
-                          weekday: 'short',
-                          day: 'numeric',
-                          month: 'long',
-                          year: 'numeric',
-                        })}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-[rgb(var(--color-text-muted))] flex items-center gap-2">
-                        <Clock className="w-3.5 h-3.5 text-[rgb(var(--color-forest))]" /> Jam Sesi Terkunci
+                        <Clock className="w-3.5 h-3.5 text-[rgb(var(--color-forest))]" /> Jam Terkunci
                       </span>
                       <span className="font-semibold text-[rgb(var(--color-forest))] bg-[rgb(var(--color-forest)/0.1)] px-2 py-0.5 rounded-md">
                         {jamIngin} WIB
@@ -381,11 +383,12 @@ export function WaitingListModal({
                   </div>
                 )}
 
-                {/* 1. SELEKSI KATEGORI MODEL KARTU */}
+                {/* ── STEP 1: PILIH KATEGORI FOTO ── */}
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center justify-between">
-                    <label className="text-sm font-heading font-semibold text-[rgb(var(--color-text))]">
-                      Pilih Kategori Foto <span className="text-red-500">*</span>
+                    <label className="text-sm font-heading font-semibold text-[rgb(var(--color-text))] flex items-center gap-1.5">
+                      <Tag className="w-3.5 h-3.5 text-[rgb(var(--color-forest))]" />
+                      Kategori Foto <span className="text-red-500">*</span>
                     </label>
                     <span className="text-xs text-[rgb(var(--color-text-muted))]">
                       {selectedCategory ? '1 dipilih' : 'Pilih 1'}
@@ -401,41 +404,104 @@ export function WaitingListModal({
                           type="button"
                           onClick={() => {
                             setCategoryId(cat.id)
-                            setErrors(prev => ({ ...prev, category: '' }))
+                            setErrors(prev => ({ ...prev, category: '', package: '' }))
                           }}
                           className={`
                             relative p-3 rounded-2xl border-2 text-left transition-all duration-150 flex flex-col justify-between min-h-[64px]
-                            ${
-                              isSelected
-                                ? 'border-[rgb(var(--color-forest))] bg-[rgb(var(--color-forest)/0.08)] text-[rgb(var(--color-forest))] shadow-sm'
-                                : 'border-[rgb(var(--color-border))] bg-[rgb(var(--color-surface))] hover:border-[rgb(var(--color-forest)/0.4)] text-[rgb(var(--color-text))]'
+                            ${isSelected
+                              ? 'border-[rgb(var(--color-forest))] bg-[rgb(var(--color-forest)/0.08)] text-[rgb(var(--color-forest))] shadow-sm'
+                              : 'border-[rgb(var(--color-border))] bg-[rgb(var(--color-surface))] hover:border-[rgb(var(--color-forest)/0.4)] text-[rgb(var(--color-text))]'
                             }
                           `}
                         >
                           <div className="flex items-center justify-between w-full">
-                            <span className="font-heading font-bold text-xs sm:text-sm line-clamp-1">
-                              {cat.nama}
-                            </span>
+                            <span className="font-heading font-bold text-xs sm:text-sm line-clamp-1">{cat.nama}</span>
                             {isSelected && (
                               <div className="w-4 h-4 rounded-full bg-[rgb(var(--color-forest))] text-white flex items-center justify-center shrink-0">
                                 <Check className="w-2.5 h-2.5" />
                               </div>
                             )}
                           </div>
-                          <span className="text-[10px] text-[rgb(var(--color-text-muted))] mt-1">
-                            Foto Studio
-                          </span>
+                          <span className="text-[10px] text-[rgb(var(--color-text-muted))] mt-1">Foto Studio</span>
                         </button>
                       )
                     })}
                   </div>
-
-                  {errors.category && (
-                    <p className="text-xs text-red-500 font-medium">{errors.category}</p>
-                  )}
+                  {errors.category && <p className="text-xs text-red-500 font-medium">{errors.category}</p>}
                 </div>
 
-                {/* 2. DATA IDENTITAS KLIEN & KAMPUS */}
+                {/* ── STEP 2: PILIH PAKET FOTO (muncul setelah pilih kategori) ── */}
+                <AnimatePresence>
+                  {categoryId && (
+                    <motion.div
+                      key="paket"
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      exit={{ opacity: 0, height: 0 }}
+                      transition={{ duration: 0.25 }}
+                      className="flex flex-col gap-2 overflow-hidden"
+                    >
+                      <div className="flex items-center justify-between">
+                        <label className="text-sm font-heading font-semibold text-[rgb(var(--color-text))] flex items-center gap-1.5">
+                          <PackageIcon className="w-3.5 h-3.5 text-[rgb(var(--color-forest))]" />
+                          Paket Foto <span className="text-red-500">*</span>
+                        </label>
+                        <span className="text-xs text-[rgb(var(--color-text-muted))]">
+                          {selectedPackage ? '1 dipilih' : 'Pilih 1'}
+                        </span>
+                      </div>
+
+                      {categoryPackages.length === 0 ? (
+                        <div className="text-center py-4 rounded-2xl bg-[rgb(var(--color-surface))] border border-dashed border-[rgb(var(--color-border))]">
+                          <p className="text-xs text-[rgb(var(--color-text-muted))]">Belum ada paket untuk kategori ini.</p>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col gap-2">
+                          {categoryPackages.map(pkg => {
+                            const isSelected = packageId === pkg.id
+                            return (
+                              <button
+                                key={pkg.id}
+                                type="button"
+                                onClick={() => {
+                                  setPackageId(pkg.id)
+                                  setErrors(prev => ({ ...prev, package: '' }))
+                                }}
+                                className={`
+                                  relative p-3.5 rounded-2xl border-2 text-left transition-all duration-150 flex items-center justify-between gap-3
+                                  ${isSelected
+                                    ? 'border-[rgb(var(--color-forest))] bg-[rgb(var(--color-forest)/0.08)] shadow-sm'
+                                    : 'border-[rgb(var(--color-border))] bg-[rgb(var(--color-surface))] hover:border-[rgb(var(--color-forest)/0.4)]'
+                                  }
+                                `}
+                              >
+                                <div className="flex-1 min-w-0">
+                                  <p className={`font-heading font-bold text-sm ${isSelected ? 'text-[rgb(var(--color-forest))]' : 'text-[rgb(var(--color-text))]'}`}>
+                                    {pkg.nama}
+                                  </p>
+                                  <div className="flex flex-wrap items-center gap-2 mt-0.5">
+                                    <span className="text-xs font-semibold text-[rgb(var(--color-forest))]">
+                                      {formatRupiah(pkg.harga)}
+                                    </span>
+                                    <span className="text-[10px] text-[rgb(var(--color-text-muted))]">
+                                      {pkg.durasi_menit} menit · maks {pkg.maks_orang} orang
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-all ${isSelected ? 'border-[rgb(var(--color-forest))] bg-[rgb(var(--color-forest))]' : 'border-[rgb(var(--color-border))]'}`}>
+                                  {isSelected && <Check className="w-3 h-3 text-white" />}
+                                </div>
+                              </button>
+                            )
+                          })}
+                        </div>
+                      )}
+                      {errors.package && <p className="text-xs text-red-500 font-medium">{errors.package}</p>}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+                {/* ── STEP 3: DATA IDENTITAS KLIEN ── */}
                 <div className="p-4 sm:p-5 rounded-3xl bg-[rgb(var(--color-surface))] border-2 border-[rgb(var(--color-border))] flex flex-col gap-3.5 shadow-sm">
                   <p className="text-xs font-heading font-bold uppercase tracking-wider text-[rgb(var(--color-forest))]">
                     Identitas & Kontak Klien
@@ -445,10 +511,7 @@ export function WaitingListModal({
                     label="Nama Lengkap *"
                     placeholder="cth. Anisa Ramadhani"
                     value={nama}
-                    onChange={e => {
-                      setNama(e.target.value)
-                      setErrors(prev => ({ ...prev, nama: '' }))
-                    }}
+                    onChange={e => { setNama(e.target.value); setErrors(prev => ({ ...prev, nama: '' })) }}
                     error={errors.nama}
                     autoComplete="name"
                   />
@@ -465,47 +528,83 @@ export function WaitingListModal({
                     type="tel"
                     placeholder="0812xxxxxxxx"
                     value={wa}
-                    onChange={e => {
-                      setWa(e.target.value)
-                      setErrors(prev => ({ ...prev, wa: '' }))
-                    }}
+                    onChange={e => { setWa(e.target.value); setErrors(prev => ({ ...prev, wa: '' })) }}
                     error={errors.wa}
-                    hint="Admin akan mengonfirmasi antrean melalui nomor WhatsApp ini"
+                    hint="Admin akan mengonfirmasi antrean melalui nomor ini"
                   />
                 </div>
 
-                {/* 3. PILIHAN TANGGAL MODERN */}
-                <div className="p-4 sm:p-5 rounded-3xl bg-[rgb(var(--color-surface))] border-2 border-[rgb(var(--color-border))] shadow-sm">
-                  <div className="mb-2">
+                {/* ── STEP 4: PILIH ACARA WISUDA ── */}
+                <div className="p-4 sm:p-5 rounded-3xl bg-[rgb(var(--color-surface))] border-2 border-[rgb(var(--color-border))] flex flex-col gap-3 shadow-sm">
+                  <div>
                     <p className="text-xs font-heading font-bold uppercase tracking-wider text-[rgb(var(--color-forest))]">
-                      Pilih Tanggal Sesi Waiting List <span className="text-red-500">*</span>
+                      Pilih Acara Wisuda <span className="text-red-500">*</span>
                     </p>
                     <p className="text-xs text-[rgb(var(--color-text-muted))] mt-0.5">
-                      Pilih tanggal yang ingin Anda amankan slotnya
+                      Pilih acara wisuda yang sesuai — slot jam dikunci per acara ini
                     </p>
                   </div>
-                  <ModernDatePicker
-                    value={tanggal}
-                    onChange={newDate => {
-                      setTanggal(newDate)
-                      setErrors(prev => ({ ...prev, tanggal: '', jamIngin: '' }))
-                    }}
-                    closedDates={settings?.closed_dates || []}
-                  />
-                  {errors.tanggal && (
-                    <p className="text-xs text-red-500 font-medium mt-1">{errors.tanggal}</p>
+
+                  {activeWisudaEvents.length === 0 ? (
+                    <div className="text-center py-5 rounded-2xl bg-[rgb(var(--color-cream)/0.5)] border border-dashed border-[rgb(var(--color-border))]">
+                      <GraduationCap className="w-6 h-6 text-[rgb(var(--color-text-muted))] mx-auto mb-1.5 opacity-40" />
+                      <p className="text-xs font-medium text-[rgb(var(--color-text-muted))]">
+                        Belum ada acara wisuda yang tersedia. Hubungi admin untuk info lebih lanjut.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-2">
+                      {activeWisudaEvents.map(acara => {
+                        const isSelected = acaraId === acara.id
+                        return (
+                          <button
+                            key={acara.id}
+                            type="button"
+                            onClick={() => {
+                              setAcaraId(acara.id)
+                              setJamIngin('')
+                              setErrors(prev => ({ ...prev, acara: '', jamIngin: '' }))
+                            }}
+                            className={`
+                              relative p-3.5 rounded-2xl border-2 text-left transition-all duration-150 flex items-center justify-between gap-3
+                              ${isSelected
+                                ? 'border-[rgb(var(--color-forest))] bg-[rgb(var(--color-forest)/0.08)] shadow-sm'
+                                : 'border-[rgb(var(--color-border))] bg-[rgb(var(--color-cream)/0.4)] hover:border-[rgb(var(--color-forest)/0.4)]'
+                              }
+                            `}
+                          >
+                            <div className="flex items-center gap-3 flex-1 min-w-0">
+                              <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${isSelected ? 'bg-[rgb(var(--color-forest))]' : 'bg-[rgb(var(--color-forest)/0.1)]'}`}>
+                                <GraduationCap className={`w-4.5 h-4.5 ${isSelected ? 'text-white' : 'text-[rgb(var(--color-forest))]'}`} />
+                              </div>
+                              <div className="min-w-0">
+                                <p className={`font-heading font-bold text-sm leading-tight ${isSelected ? 'text-[rgb(var(--color-forest))]' : 'text-[rgb(var(--color-text))]'}`}>
+                                  {acara.nama}
+                                </p>
+                                <p className="text-[11px] text-[rgb(var(--color-text-muted))] mt-0.5 truncate">
+                                  {acara.kampus}
+                                  {acara.keterangan ? ` · ${acara.keterangan}` : ''}
+                                </p>
+                              </div>
+                            </div>
+                            <ChevronRight className={`w-4 h-4 shrink-0 transition-transform ${isSelected ? 'text-[rgb(var(--color-forest))] rotate-90' : 'text-[rgb(var(--color-text-muted))]'}`} />
+                          </button>
+                        )
+                      })}
+                    </div>
                   )}
+                  {errors.acara && <p className="text-xs text-red-500 font-medium">{errors.acara}</p>}
                 </div>
 
-                {/* 4. PILIHAN JAM SAMA PERSIS DENGAN FORM BOOKING DENGAN SISTEM BLOKIR WAITING LIST */}
+                {/* ── STEP 5: PILIH JAM (diblok per acara) ── */}
                 <div className="p-4 sm:p-5 rounded-3xl bg-[rgb(var(--color-surface))] border-2 border-[rgb(var(--color-border))] flex flex-col gap-3 shadow-sm">
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-xs font-heading font-bold uppercase tracking-wider text-[rgb(var(--color-forest))]">
-                        Pilih Jam Mulai Sesi <span className="text-red-500">*</span>
+                        Pilih Jam Sesi <span className="text-red-500">*</span>
                       </p>
                       <p className="text-xs text-[rgb(var(--color-text-muted))] mt-0.5">
-                        Jam yang sudah ada antrean client lain tidak dapat dipilih kembali
+                        Jam yang sudah dipesan client lain (acara sama) tidak bisa dipilih
                       </p>
                     </div>
                     {jamIngin && (
@@ -516,11 +615,11 @@ export function WaitingListModal({
                     )}
                   </div>
 
-                  {!tanggal ? (
+                  {!acaraId ? (
                     <div className="text-center py-6 px-3 bg-[rgb(var(--color-cream)/0.5)] rounded-2xl border border-dashed border-[rgb(var(--color-border))]">
-                      <Clock className="w-6 h-6 text-[rgb(var(--color-text-muted))] mx-auto mb-1.5 opacity-40" />
+                      <GraduationCap className="w-6 h-6 text-[rgb(var(--color-text-muted))] mx-auto mb-1.5 opacity-40" />
                       <p className="text-xs font-medium text-[rgb(var(--color-text-muted))]">
-                        Silakan pilih tanggal terlebih dahulu di atas untuk melihat slot jam
+                        Pilih acara wisuda terlebih dahulu untuk melihat slot jam
                       </p>
                     </div>
                   ) : loadingSlots ? (
@@ -531,7 +630,7 @@ export function WaitingListModal({
                   ) : sessionGroups.length === 0 ? (
                     <div className="text-center py-6 px-3 bg-red-50/50 rounded-2xl border border-red-200">
                       <p className="text-xs font-medium text-red-600">
-                        Tidak ada slot jam operasional yang tersedia untuk tanggal ini.
+                        Tidak ada slot jam yang tersedia.
                       </p>
                     </div>
                   ) : (
@@ -549,45 +648,34 @@ export function WaitingListModal({
                             <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
                               {group.items.map(slot => {
                                 const isSelected = jamIngin === slot
-                                const isWaitingList = waitingListSlots.includes(slot)
-                                const isBooked = bookedSlots.includes(slot)
-                                const isUnavailable = isWaitingList || isBooked
+                                const isTaken = takenSlots.includes(slot)
 
                                 return (
                                   <button
                                     key={slot}
                                     type="button"
-                                    disabled={isUnavailable}
+                                    disabled={isTaken}
                                     onClick={() => {
-                                      if (!isUnavailable) {
+                                      if (!isTaken) {
                                         setJamIngin(isSelected ? '' : slot)
                                         setErrors(prev => ({ ...prev, jamIngin: '' }))
                                       }
                                     }}
                                     className={`
                                       relative py-2.5 px-2 rounded-xl text-center border-2 transition-all flex flex-col items-center justify-center
-                                      ${
-                                        isWaitingList
-                                          ? 'bg-amber-50/70 border-amber-200 text-amber-800/80 cursor-not-allowed opacity-75'
-                                          : isBooked
-                                          ? 'bg-red-50/70 border-red-200 text-red-700/80 cursor-not-allowed opacity-75'
-                                          : isSelected
-                                          ? 'bg-[rgb(var(--color-forest))] text-white border-[rgb(var(--color-blitz))] shadow-md font-bold'
-                                          : 'bg-[rgb(var(--color-surface))] border-[rgb(var(--color-border))] text-[rgb(var(--color-text))] hover:border-[rgb(var(--color-forest)/0.5)]'
+                                      ${isTaken
+                                        ? 'bg-amber-50/70 border-amber-200 text-amber-800/80 cursor-not-allowed opacity-75'
+                                        : isSelected
+                                        ? 'bg-[rgb(var(--color-forest))] text-white border-[rgb(var(--color-blitz))] shadow-md font-bold'
+                                        : 'bg-[rgb(var(--color-surface))] border-[rgb(var(--color-border))] text-[rgb(var(--color-text))] hover:border-[rgb(var(--color-forest)/0.5)]'
                                       }
                                     `}
                                   >
-                                    <span className="font-heading text-xs sm:text-sm font-bold">
-                                      {slot}
-                                    </span>
+                                    <span className="font-heading text-xs sm:text-sm font-bold">{slot}</span>
 
-                                    {isWaitingList ? (
+                                    {isTaken ? (
                                       <span className="text-[9px] text-amber-700 font-semibold flex items-center gap-0.5 mt-0.5">
-                                        <Lock className="w-2.5 h-2.5" /> Ada Antrean
-                                      </span>
-                                    ) : isBooked ? (
-                                      <span className="text-[9px] text-red-600 font-semibold flex items-center gap-0.5 mt-0.5">
-                                        <Lock className="w-2.5 h-2.5" /> Booked
+                                        <Lock className="w-2.5 h-2.5" /> Terambil
                                       </span>
                                     ) : isSelected ? (
                                       <span className="text-[9px] text-[rgb(var(--color-blitz))] font-semibold mt-0.5">
@@ -612,30 +700,24 @@ export function WaitingListModal({
                         )
                       })}
 
-                      {/* Legend info slot */}
+                      {/* Legend */}
                       <div className="flex flex-wrap items-center gap-3 pt-2 text-[11px] text-[rgb(var(--color-text-muted))] border-t border-[rgb(var(--color-border)/0.5)]">
                         <div className="flex items-center gap-1.5">
                           <span className="w-2.5 h-2.5 rounded-full bg-[rgb(var(--color-surface))] border border-[rgb(var(--color-border))]" />
-                          <span>Bisa Dipilih</span>
+                          <span>Tersedia</span>
                         </div>
                         <div className="flex items-center gap-1.5">
                           <span className="w-2.5 h-2.5 rounded-full bg-amber-400" />
-                          <span>Ada Antrean Waiting List</span>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <span className="w-2.5 h-2.5 rounded-full bg-red-400" />
-                          <span>Sudah Dibooking</span>
+                          <span>Sudah Dipesan (Acara Ini)</span>
                         </div>
                       </div>
                     </div>
                   )}
 
-                  {errors.jamIngin && (
-                    <p className="text-xs text-red-500 font-medium">{errors.jamIngin}</p>
-                  )}
+                  {errors.jamIngin && <p className="text-xs text-red-500 font-medium">{errors.jamIngin}</p>}
                 </div>
 
-                {/* 5. WAJIB DP MINIMAL 100RB & KETERANGAN BUKTI VIA WA */}
+                {/* ── KETENTUAN DP ── */}
                 <div className="p-4 sm:p-5 rounded-3xl bg-[rgb(var(--color-surface))] border-2 border-[rgb(var(--color-forest)/0.25)] flex flex-col gap-3 shadow-sm bg-gradient-to-br from-[rgb(var(--color-forest)/0.03)] to-transparent">
                   <div className="flex items-center justify-between pb-2 border-b border-[rgb(var(--color-border))]">
                     <div className="flex items-center gap-2">
@@ -650,10 +732,10 @@ export function WaitingListModal({
                   </div>
 
                   <p className="text-xs text-[rgb(var(--color-text))] leading-relaxed">
-                    Untuk mengunci slot jam antrean waiting list di atas agar tidak diambil orang lain, Anda diwajibkan melakukan transfer DP minimal <strong>{formatRupiah(dpMinimal)}</strong>.
+                    Untuk mengunci slot jam, transfer DP minimal <strong>{formatRupiah(dpMinimal)}</strong> dan kirimkan bukti transfer via WhatsApp ke admin.
                   </p>
 
-                  {/* Box Rekening Bank */}
+                  {/* Rekening Bank */}
                   <div className="rounded-2xl bg-[rgb(var(--color-forest)/0.06)] border border-[rgb(var(--color-forest)/0.2)] p-3.5 flex items-center justify-between">
                     <div>
                       <p className="text-[11px] text-[rgb(var(--color-text-muted))]">Transfer Bank BNI:</p>
@@ -676,16 +758,15 @@ export function WaitingListModal({
                     </Button>
                   </div>
 
-                  {/* Keterangan Bukti Transfer via WA */}
                   <div className="rounded-2xl bg-emerald-50/80 border border-emerald-300 p-3 flex items-start gap-2.5">
                     <MessageCircle className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
                     <p className="text-xs text-emerald-800 leading-relaxed font-medium">
-                      <strong>Bukti transfer DP dikirimkan via WhatsApp ke Admin:</strong> Setelah Anda mengisi form ini, screenshot bukti transfer DP dapat langsung dikirimkan melalui WhatsApp agar admin studio memverifikasi antrean Anda.
+                      <strong>Bukti transfer DP dikirim via WhatsApp ke Admin</strong> setelah mengisi form ini.
                     </p>
                   </div>
                 </div>
 
-                {/* 6. CATATAN KHUSUS */}
+                {/* ── CATATAN KHUSUS ── */}
                 <div className="p-4 sm:p-5 rounded-3xl bg-[rgb(var(--color-surface))] border-2 border-[rgb(var(--color-border))] shadow-sm">
                   <Textarea
                     label="Catatan Khusus (opsional)"
@@ -698,19 +779,10 @@ export function WaitingListModal({
 
                 {/* Tombol Aksi */}
                 <div className="flex gap-3 pt-1">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={onClose}
-                    className="flex-1"
-                  >
+                  <Button type="button" variant="ghost" onClick={onClose} className="flex-1">
                     Batal
                   </Button>
-                  <Button
-                    type="submit"
-                    loading={loading}
-                    className="flex-1 group"
-                  >
+                  <Button type="submit" loading={loading} className="flex-1 group">
                     Daftar Waiting List
                     <ArrowRight className="w-4 h-4 transition-transform group-hover:translate-x-1" />
                   </Button>

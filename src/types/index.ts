@@ -126,13 +126,25 @@ export interface BookingStatusLog {
   created_at: string
 }
 
+export interface WisudaEvent {
+  id: string
+  nama: string           // cth. "Wisuda UNTAN Oktober 2026"
+  kampus: string         // cth. "Universitas Tanjungpura"
+  keterangan?: string | null
+  aktif: boolean
+  created_at: string
+}
+
 export interface WaitingList {
   id: string
   nama: string
   wa: string
   category_id: string | null
   category_nama: string
-  tanggal_ingin: string | null
+  package_nama?: string | null    // paket foto yang dipilih client
+  acara_id?: string | null        // id WisudaEvent yang dipilih
+  acara_nama?: string | null      // nama event wisuda
+  tanggal_ingin: string | null    // opsional / deprecated (digantikan acara)
   catatan: string | null
   sudah_dihubungi: boolean
   created_at: string

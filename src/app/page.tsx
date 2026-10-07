@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { BookingWizard } from '@/components/booking/BookingWizard'
-import type { Settings, Category, Package, Addon, BackgroundItem } from '@/types'
+import type { Settings, Category, Package, Addon, BackgroundItem, WisudaEvent } from '@/types'
 
 export const dynamic = 'force-dynamic'
 
@@ -40,12 +40,14 @@ async function getData() {
       { data: packages },
       { data: addons },
       { data: addonCategories },
+      { data: wisudaEvents },
     ] = await Promise.all([
       supabase.from('settings').select('key, value'),
       supabase.from('categories').select('*').eq('aktif', true).order('urutan'),
       supabase.from('packages').select('*').eq('aktif', true).order('urutan'),
       supabase.from('addons').select('*').order('urutan'),
       supabase.from('addon_categories').select('*'),
+      supabase.from('wisuda_events').select('*').eq('aktif', true).order('created_at', { ascending: false }),
     ])
 
     const loadedSettings: Record<string, unknown> = {}
@@ -75,6 +77,7 @@ async function getData() {
       packages: (packages || []) as Package[],
       addons: (addons || []) as Addon[],
       addonCategories: addonCategories || [],
+      wisudaEvents: (wisudaEvents || []) as WisudaEvent[],
     }
   } catch (error) {
     console.error('Error fetching data from Supabase:', error)
@@ -84,12 +87,13 @@ async function getData() {
       packages: [],
       addons: [],
       addonCategories: [],
+      wisudaEvents: [],
     }
   }
 }
 
 export default async function HomePage() {
-  const { settings, categories, packages, addons, addonCategories } = await getData()
+  const { settings, categories, packages, addons, addonCategories, wisudaEvents } = await getData()
 
   return (
     <main className="min-h-screen bg-[rgb(var(--color-cream))]">
@@ -99,7 +103,9 @@ export default async function HomePage() {
         packages={packages}
         addons={addons}
         addonCategories={addonCategories}
+        wisudaEvents={wisudaEvents}
       />
     </main>
   )
 }
+
