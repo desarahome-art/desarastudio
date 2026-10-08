@@ -1,64 +1,42 @@
 'use client'
 
 import { useState, useTransition, useMemo } from 'react'
-import { formatRupiah } from '@/lib/utils'
-import { updateBookingStatus, updateCetakStatus, getBuktiTransferSignedUrl, deleteBooking } from '@/app/actions'
+import { formatRupiah, cn } from '@/lib/utils'
+import {
+  updateBookingStatus,
+  updateCetakStatus,
+  getBuktiTransferSignedUrl,
+  deleteBooking,
+} from '@/app/actions'
 import { Button } from '@/components/ui/Button'
 import { AdminCalendarPicker } from './AdminCalendarPicker'
 import { RescheduleModal } from './RescheduleModal'
 import { WhatsAppTemplateModal } from './WhatsAppTemplateModal'
 import {
-  Search, MessageCircle, ChevronDown,
-  ChevronUp, CheckCircle, XCircle, Flag,
-  ExternalLink, Calendar, Clock, Filter,
-  CalendarDays, Layers, Printer, Trash2
+  BookingStatusBadge,
+  CetakBadge,
+  InfoChip,
+  ClientCardShell,
+  ClientCardField,
+} from './shared/ClientCardUI'
+import {
+  Search,
+  MessageCircle,
+  ChevronDown,
+  ChevronUp,
+  CheckCircle,
+  XCircle,
+  Flag,
+  ExternalLink,
+  Calendar,
+  Clock,
+  CalendarDays,
+  Layers,
+  Printer,
+  Trash2,
 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import type { Booking, BookingStatus, CetakStatus, Package, Category } from '@/types'
-
-const statusLabel: Record<BookingStatus, string> = {
-  pending: 'Menunggu',
-  booking: 'Dikonfirmasi',
-  selesai: 'Selesai',
-  dibatalkan: 'Dibatalkan',
-}
-
-const statusColor: Record<BookingStatus, string> = {
-  pending:    'bg-yellow-100 text-yellow-800 border border-yellow-300',
-  booking:    'bg-blue-100 text-blue-800 border border-blue-300',
-  selesai:    'bg-green-100 text-green-800 border border-green-300',
-  dibatalkan: 'bg-red-100 text-red-800 border border-red-300',
-}
-
-const cetakStatusLabel: Record<CetakStatus, string> = {
-  menunggu: 'Belum Dicetak',
-  proses: 'Sedang Dicetak',
-  selesai: 'Selesai Cetak',
-}
-
-const cetakStatusColor: Record<CetakStatus, string> = {
-  menunggu: 'bg-amber-50 text-amber-800 border-amber-300',
-  proses:   'bg-purple-50 text-purple-800 border-purple-300',
-  selesai:  'bg-emerald-50 text-emerald-800 border-emerald-300',
-}
-
-function StatusBadge({ status }: { status: BookingStatus }) {
-  return (
-    <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${statusColor[status]}`}>
-      {statusLabel[status]}
-    </span>
-  )
-}
-
-function CetakStatusBadge({ status }: { status: CetakStatus | null | undefined }) {
-  const current = status || 'menunggu'
-  return (
-    <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-0.5 rounded-full border ${cetakStatusColor[current]}`}>
-      <Printer className="w-3 h-3" />
-      {cetakStatusLabel[current]}
-    </span>
-  )
-}
 
 interface BookingRowProps {
   booking: Booking
@@ -68,7 +46,13 @@ interface BookingRowProps {
   onOpenWhatsApp: (booking: Booking) => void
 }
 
-function BookingRow({ booking, adminEmail, onRefresh, onOpenReschedule, onOpenWhatsApp }: BookingRowProps) {
+function BookingRow({
+  booking,
+  adminEmail,
+  onRefresh,
+  onOpenReschedule,
+  onOpenWhatsApp,
+}: BookingRowProps) {
   const [expanded, setExpanded] = useState(false)
   const [isPending, startTransition] = useTransition()
   const [isCetakPending, startCetakTransition] = useTransition()
@@ -78,7 +62,7 @@ function BookingRow({ booking, adminEmail, onRefresh, onOpenReschedule, onOpenWh
   // Deteksi apakah booking ini ada cetak foto (dari paket snapshot atau add-on)
   const hasCetakPaket = Boolean(
     booking.package_snapshot?.cetak_ukuran ||
-    (booking.package_snapshot?.cetak_jumlah && booking.package_snapshot.cetak_jumlah > 0)
+      (booking.package_snapshot?.cetak_jumlah && booking.package_snapshot.cetak_jumlah > 0)
   )
   const cetakAddons = (booking.booking_addons || []).filter(a => a.jenis === 'cetak')
   const hasCetakAddon = cetakAddons.length > 0
@@ -137,110 +121,138 @@ function BookingRow({ booking, adminEmail, onRefresh, onOpenReschedule, onOpenWh
     }
   }
 
+  const formattedDate = new Date(booking.tanggal).toLocaleDateString('id-ID', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  })
+
   return (
-    <div className="rounded-2xl border-2 border-[rgb(var(--color-border))] bg-[rgb(var(--color-surface))] overflow-hidden transition-all shadow-xs hover:border-[rgb(var(--color-forest)/0.4)]">
-      {/* Header row */}
+    <ClientCardShell>
+      {/* ── Header row (Accordion Trigger) ── */}
       <button
+        type="button"
         onClick={() => setExpanded(e => !e)}
-        className="w-full flex items-center gap-4 p-4 text-left hover:bg-[rgb(var(--color-cream-dark)/0.5)] transition-colors"
+        className="w-full p-3 sm:p-4 text-left transition-colors hover:bg-[rgb(var(--color-cream-dark)/0.35)] focus-visible:outline-none focus-visible:bg-[rgb(var(--color-cream-dark)/0.35)]"
       >
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-1 flex-wrap">
-            <span className="font-heading font-bold">{booking.nama_klien}</span>
-            <StatusBadge status={booking.status} />
-            {hasCetak && (
-              <CetakStatusBadge status={booking.status_cetak} />
-            )}
+        <div className="flex items-start justify-between gap-3">
+          {/* Sisi Kiri: Nama, Status, Meta, Chips */}
+          <div className="flex-1 min-w-0">
+            {/* Baris 1: Nama Klien + Status Badge */}
+            <div className="flex items-center gap-2 flex-wrap mb-1">
+              <span className="font-heading font-semibold text-[15px] sm:text-base text-[rgb(var(--color-text))] truncate max-w-[200px] sm:max-w-none">
+                {booking.nama_klien}
+              </span>
+              <BookingStatusBadge status={booking.status} />
+              {hasCetak && <CetakBadge status={booking.status_cetak} />}
+            </div>
+
+            {/* Baris 2: Meta line (kode · kategori – paket) */}
+            <p className="text-xs text-[rgb(var(--color-text-muted))] truncate mb-2">
+              <span className="font-mono">{booking.kode}</span> · {booking.category_nama} – {booking.package_nama}
+            </p>
+
+            {/* Baris 3: Info Chips (Tanggal & Jam) */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <InfoChip icon={<Calendar className="w-3.5 h-3.5 text-[rgb(var(--color-forest))]" />} variant="forest">
+                {formattedDate}
+              </InfoChip>
+              <InfoChip icon={<Clock className="w-3.5 h-3.5 text-amber-700" />} variant="amber">
+                {booking.jam_mulai} WIB
+              </InfoChip>
+              {booking.kampus && (
+                <InfoChip variant="neutral" className="hidden sm:inline-flex truncate max-w-[180px]">
+                  {booking.kampus}
+                </InfoChip>
+              )}
+            </div>
           </div>
-          <p className="text-xs text-[rgb(var(--color-text-muted))]">
-            {booking.kode} · {booking.category_nama} – {booking.package_nama}
-          </p>
-          <div className="flex items-center gap-3 mt-1 text-xs text-[rgb(var(--color-text))] font-medium">
-            <span className="flex items-center gap-1 text-[rgb(var(--color-forest))] font-bold bg-[rgb(var(--color-forest)/0.08)] px-2 py-0.5 rounded-md">
-              <Calendar className="w-3.5 h-3.5" />
-              {new Date(booking.tanggal).toLocaleDateString('id-ID', {
-                weekday: 'short', day: 'numeric', month: 'short', year: 'numeric'
-              })}
-            </span>
-            <span className="flex items-center gap-1 bg-[rgb(var(--color-blitz)/0.15)] text-[rgb(var(--color-text))] font-bold px-2 py-0.5 rounded-md">
-              <Clock className="w-3.5 h-3.5 text-[rgb(var(--color-forest))]" />
-              {booking.jam_mulai} WIB
-            </span>
+
+          {/* Sisi Kanan: Harga, DP & Toggle Chevron */}
+          <div className="flex items-center gap-2.5 sm:gap-4 shrink-0 text-right pt-0.5">
+            <div>
+              <p className="font-heading font-semibold text-sm sm:text-base text-[rgb(var(--color-forest))]">
+                {formatRupiah(booking.total_harga)}
+              </p>
+              <p className="text-[11px] text-[rgb(var(--color-text-muted))]">
+                DP {formatRupiah(booking.dp_dibayar)}
+              </p>
+            </div>
+            <div className="w-6 h-6 rounded-md flex items-center justify-center text-[rgb(var(--color-text-muted))] hover:text-[rgb(var(--color-text))]">
+              {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            </div>
           </div>
         </div>
-        <div className="text-right flex-shrink-0">
-          <p className="font-heading font-bold text-[rgb(var(--color-forest))]">
-            {formatRupiah(booking.total_harga)}
-          </p>
-          <p className="text-xs text-[rgb(var(--color-text-muted))]">
-            DP {formatRupiah(booking.dp_dibayar)}
-          </p>
-        </div>
-        {expanded
-          ? <ChevronUp className="w-4 h-4 flex-shrink-0 text-[rgb(var(--color-text-muted))]" />
-          : <ChevronDown className="w-4 h-4 flex-shrink-0 text-[rgb(var(--color-text-muted))]" />
-        }
       </button>
 
-      {/* Expanded detail */}
+      {/* ── Expanded Detail & Actions ── */}
       {expanded && (
-        <div className="border-t border-[rgb(var(--color-border))] p-4 bg-[rgb(var(--color-surface))]">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm mb-4">
-            <div>
-              <p className="text-xs text-[rgb(var(--color-text-muted))] mb-0.5">WhatsApp</p>
-              <p className="font-medium">{booking.wa_klien}</p>
-            </div>
+        <div className="border-t border-[rgb(var(--color-border))] p-3 sm:p-4 bg-[rgb(var(--color-surface))]">
+          {/* Informasi Sekunder Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3 text-sm mb-3 sm:mb-4">
+            <ClientCardField label="WhatsApp">
+              <a
+                href={`https://wa.me/${booking.wa_klien}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[rgb(var(--color-forest))] hover:underline inline-flex items-center gap-1"
+              >
+                {booking.wa_klien}
+              </a>
+            </ClientCardField>
+
             {booking.kampus && (
-              <div>
-                <p className="text-xs text-[rgb(var(--color-text-muted))] mb-0.5">Kampus / Instansi</p>
-                <p className="font-medium">{booking.kampus}</p>
-              </div>
+              <ClientCardField label="Kampus / Instansi">
+                {booking.kampus}
+              </ClientCardField>
             )}
-            <div>
-              <p className="text-xs text-[rgb(var(--color-text-muted))] mb-0.5">Durasi</p>
-              <p>{booking.durasi_total} menit</p>
-            </div>
-            <div>
-              <p className="text-xs text-[rgb(var(--color-text-muted))] mb-0.5">Background dipilih</p>
-              <p>{booking.pilihan_background?.join(', ') || '-'}</p>
-            </div>
+
+            <ClientCardField label="Durasi Total">
+              {booking.durasi_total} menit
+            </ClientCardField>
+
+            <ClientCardField label="Background Dipilih">
+              {booking.pilihan_background?.length ? booking.pilihan_background.join(', ') : '-'}
+            </ClientCardField>
+
             {booking.catatan && (
-              <div className="sm:col-span-2">
-                <p className="text-xs text-[rgb(var(--color-text-muted))] mb-0.5">Catatan & Riwayat</p>
-                <p className="whitespace-pre-line text-xs font-medium text-[rgb(var(--color-text))]">{booking.catatan}</p>
-              </div>
+              <ClientCardField label="Catatan & Riwayat" className="sm:col-span-2">
+                <p className="whitespace-pre-line text-xs font-normal text-[rgb(var(--color-text))] bg-[rgb(var(--color-cream-dark)/0.3)] p-2 rounded-lg border border-[rgb(var(--color-border)/0.6)]">
+                  {booking.catatan}
+                </p>
+              </ClientCardField>
             )}
+
             {booking.bukti_transfer && (
-              <div className="sm:col-span-2">
-                <p className="text-xs text-[rgb(var(--color-text-muted))] mb-1">Bukti Transfer</p>
+              <ClientCardField label="Bukti Transfer" className="sm:col-span-2">
                 <button
                   type="button"
                   disabled={loadingBukti}
                   onClick={handleViewBukti}
-                  className="inline-flex items-center gap-1.5 text-xs sm:text-sm font-medium text-[rgb(var(--color-forest))] hover:underline bg-[rgb(var(--color-forest)/0.08)] px-3 py-1.5 rounded-xl border border-[rgb(var(--color-forest)/0.2)]"
+                  className="inline-flex items-center gap-1.5 text-xs font-medium text-[rgb(var(--color-forest))] hover:bg-[rgb(var(--color-forest)/0.12)] bg-[rgb(var(--color-forest)/0.06)] px-2.5 py-1.5 rounded-lg border border-[rgb(var(--color-forest)/0.2)] transition-colors min-h-[36px]"
                 >
                   <ExternalLink className="w-3.5 h-3.5" />
                   {loadingBukti ? 'Memuat gambar...' : 'Lihat Bukti Transfer'}
                 </button>
-              </div>
+              </ClientCardField>
             )}
 
-            {/* Bagian Status & Info Cetak Foto jika ada */}
+            {/* ── Section Info & Status Cetak Foto (Segmented Control Kompak) ── */}
             {hasCetak && (
-              <div className="sm:col-span-2 mt-2 p-3.5 rounded-2xl bg-[rgb(var(--color-cream-dark)/0.6)] border border-[rgb(var(--color-border))]">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-                  <div>
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="font-heading font-bold text-xs text-[rgb(var(--color-forest))] flex items-center gap-1.5">
-                        <Printer className="w-4 h-4" />
-                        Info & Status Cetak Foto
+              <div className="sm:col-span-2 rounded-lg border border-[rgb(var(--color-border))] bg-[rgb(var(--color-cream-dark)/0.25)] p-2.5 sm:p-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5 mb-0.5">
+                      <Printer className="w-3.5 h-3.5 text-[rgb(var(--color-forest))]" />
+                      <span className="text-xs font-semibold text-[rgb(var(--color-text))]">
+                        Status Cetak Foto
                       </span>
-                      <CetakStatusBadge status={booking.status_cetak} />
                     </div>
-                    <p className="text-xs text-[rgb(var(--color-text-muted))]">
+                    <p className="text-[11px] text-[rgb(var(--color-text-muted))] truncate">
                       {hasCetakPaket && (
                         <span>
-                          Paket: {booking.package_snapshot.cetak_ukuran || 'Cetak'} ({booking.package_snapshot.cetak_jumlah || 1} lembar)
+                          Paket: {booking.package_snapshot.cetak_ukuran || 'Cetak'} ({booking.package_snapshot.cetak_jumlah || 1} lbr)
                         </span>
                       )}
                       {hasCetakPaket && hasCetakAddon && ' · '}
@@ -252,20 +264,18 @@ function BookingRow({ booking, adminEmail, onRefresh, onOpenReschedule, onOpenWh
                     </p>
                   </div>
 
-                  {/* Kontrol Update Status Cetak */}
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <span className="text-[11px] font-medium text-[rgb(var(--color-text-muted))] mr-1">
-                      Ubah Status:
-                    </span>
+                  {/* Segmented Control */}
+                  <div className="inline-flex items-center self-start sm:self-auto rounded-lg border border-[rgb(var(--color-border))] bg-[rgb(var(--color-surface))] p-0.5 shrink-0">
                     <button
                       type="button"
                       disabled={isCetakPending || (booking.status_cetak === 'menunggu' || !booking.status_cetak)}
                       onClick={() => handleCetakStatus('menunggu')}
-                      className={`text-xs px-2.5 py-1 rounded-xl font-medium transition-all border ${
+                      className={cn(
+                        'text-xs px-2.5 py-1 rounded-[6px] font-medium transition-all min-h-[32px]',
                         booking.status_cetak === 'menunggu' || !booking.status_cetak
-                          ? 'bg-amber-100 text-amber-800 border-amber-300 font-bold shadow-xs'
-                          : 'bg-[rgb(var(--color-surface))] text-[rgb(var(--color-text-muted))] border-[rgb(var(--color-border))] hover:border-amber-300'
-                      }`}
+                          ? 'bg-amber-100 text-amber-900 font-semibold shadow-xs'
+                          : 'text-[rgb(var(--color-text-muted))] hover:text-[rgb(var(--color-text))]'
+                      )}
                     >
                       Belum
                     </button>
@@ -273,11 +283,12 @@ function BookingRow({ booking, adminEmail, onRefresh, onOpenReschedule, onOpenWh
                       type="button"
                       disabled={isCetakPending || booking.status_cetak === 'proses'}
                       onClick={() => handleCetakStatus('proses')}
-                      className={`text-xs px-2.5 py-1 rounded-xl font-medium transition-all border ${
+                      className={cn(
+                        'text-xs px-2.5 py-1 rounded-[6px] font-medium transition-all min-h-[32px]',
                         booking.status_cetak === 'proses'
-                          ? 'bg-purple-100 text-purple-800 border-purple-300 font-bold shadow-xs'
-                          : 'bg-[rgb(var(--color-surface))] text-[rgb(var(--color-text-muted))] border-[rgb(var(--color-border))] hover:border-purple-300'
-                      }`}
+                          ? 'bg-purple-100 text-purple-900 font-semibold shadow-xs'
+                          : 'text-[rgb(var(--color-text-muted))] hover:text-[rgb(var(--color-text))]'
+                      )}
                     >
                       Proses
                     </button>
@@ -285,11 +296,12 @@ function BookingRow({ booking, adminEmail, onRefresh, onOpenReschedule, onOpenWh
                       type="button"
                       disabled={isCetakPending || booking.status_cetak === 'selesai'}
                       onClick={() => handleCetakStatus('selesai')}
-                      className={`text-xs px-2.5 py-1 rounded-xl font-medium transition-all border ${
+                      className={cn(
+                        'text-xs px-2.5 py-1 rounded-[6px] font-medium transition-all min-h-[32px]',
                         booking.status_cetak === 'selesai'
-                          ? 'bg-emerald-100 text-emerald-800 border-emerald-300 font-bold shadow-xs'
-                          : 'bg-[rgb(var(--color-surface))] text-[rgb(var(--color-text-muted))] border-[rgb(var(--color-border))] hover:border-emerald-300'
-                      }`}
+                          ? 'bg-emerald-100 text-emerald-900 font-semibold shadow-xs'
+                          : 'text-[rgb(var(--color-text-muted))] hover:text-[rgb(var(--color-text))]'
+                      )}
                     >
                       Selesai
                     </button>
@@ -299,80 +311,92 @@ function BookingRow({ booking, adminEmail, onRefresh, onOpenReschedule, onOpenWh
             )}
           </div>
 
-          {/* Actions Bar */}
-          <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-[rgb(var(--color-border)/0.6)]">
-            {booking.status === 'pending' && (
-              <Button
-                size="sm"
-                onClick={() => handleStatus('booking')}
-                loading={isPending}
-              >
-                <CheckCircle className="w-4 h-4" />
-                Konfirmasi Booking
-              </Button>
-            )}
+          {/* ── Footer Aksi ── */}
+          <div className="pt-3 border-t border-[rgb(var(--color-border)/0.6)] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            {/* Sisi Kiri / Atas (Primary & Secondary Actions) */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 flex-wrap">
+              {/* Primary Action Button */}
+              {booking.status === 'pending' && (
+                <Button
+                  size="sm"
+                  onClick={() => handleStatus('booking')}
+                  loading={isPending}
+                  className="rounded-lg h-9 min-h-[40px] text-xs font-semibold w-full sm:w-auto"
+                >
+                  <CheckCircle className="w-3.5 h-3.5" />
+                  Konfirmasi Booking
+                </Button>
+              )}
 
-            {/* Tombol Modern Atur Ulang Tanggal, Jam & Paket */}
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => onOpenReschedule(booking)}
-              className="border border-[rgb(var(--color-border))] hover:bg-[rgb(var(--color-forest)/0.1)] text-[rgb(var(--color-forest))]"
-            >
-              <Calendar className="w-3.5 h-3.5 mr-1" />
-              Edit Jadwal & Paket
-            </Button>
+              {booking.status === 'booking' && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => handleStatus('selesai')}
+                  loading={isPending}
+                  className="rounded-lg h-9 min-h-[40px] text-xs font-semibold w-full sm:w-auto"
+                >
+                  <Flag className="w-3.5 h-3.5" />
+                  Tandai Selesai
+                </Button>
+              )}
 
-            {booking.status === 'booking' && (
-              <Button
-                size="sm"
-                onClick={() => handleStatus('selesai')}
-                loading={isPending}
-                variant="secondary"
-              >
-                <Flag className="w-4 h-4" />
-                Tandai Selesai
-              </Button>
-            )}
+              {/* Baris Secondary & Destructive di Mobile / inline di desktop */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => onOpenReschedule(booking)}
+                  className="rounded-lg h-9 min-h-[40px] text-xs border border-[rgb(var(--color-border))] text-[rgb(var(--color-text))] hover:bg-[rgb(var(--color-cream-dark)/0.5)] justify-center flex-1 sm:flex-none"
+                >
+                  <Calendar className="w-3.5 h-3.5 mr-1 text-[rgb(var(--color-forest))]" />
+                  Edit Jadwal & Paket
+                </Button>
 
-            {(booking.status === 'pending' || booking.status === 'booking') && (
-              <Button
-                size="sm"
-                variant="danger"
-                onClick={() => handleStatus('dibatalkan')}
-                loading={isPending}
-              >
-                <XCircle className="w-4 h-4" />
-                Batalkan
-              </Button>
-            )}
+                {/* Destructive Ghost: Batalkan */}
+                {(booking.status === 'pending' || booking.status === 'booking') && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => handleStatus('dibatalkan')}
+                    loading={isPending}
+                    className="rounded-lg h-9 min-h-[40px] text-xs border border-rose-200 text-rose-700 bg-rose-50/40 hover:bg-rose-100/60 hover:border-rose-300 justify-center flex-1 sm:flex-none"
+                  >
+                    <XCircle className="w-3.5 h-3.5 mr-1 text-rose-600" />
+                    Batalkan
+                  </Button>
+                )}
 
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={handleDelete}
-              loading={isDeleting}
-              disabled={isPending || isDeleting}
-              className="border border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300 flex items-center gap-1.5"
-              title="Hapus Permanen Data Booking Ini"
-            >
-              <Trash2 className="w-3.5 h-3.5 text-red-500" />
-              Hapus
-            </Button>
+                {/* Destructive Ghost: Hapus Permanen */}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={handleDelete}
+                  loading={isDeleting}
+                  disabled={isPending || isDeleting}
+                  className="rounded-lg h-9 min-h-[40px] text-xs border border-rose-200 text-rose-700 bg-rose-50/40 hover:bg-rose-100/60 hover:border-rose-300 justify-center flex-1 sm:flex-none"
+                  title="Hapus Permanen Data Booking Ini"
+                >
+                  <Trash2 className="w-3.5 h-3.5 mr-1 text-rose-600" />
+                  Hapus
+                </Button>
+              </div>
+            </div>
 
+            {/* Sisi Kanan: WhatsApp Template Modal */}
             <Button
               size="sm"
               variant="ghost"
               onClick={() => onOpenWhatsApp(booking)}
-              className="ml-auto bg-[#25D366]/10 text-[#075E54] hover:bg-[#25D366]/20 font-bold border border-[#25D366]/30 flex items-center gap-1.5"
+              className="rounded-lg h-9 min-h-[40px] text-xs font-medium border border-emerald-300/80 text-emerald-800 bg-emerald-50/70 hover:bg-emerald-100/80 justify-center w-full sm:w-auto"
             >
-              <MessageCircle className="w-4 h-4 text-[#075E54]" />
+              <MessageCircle className="w-3.5 h-3.5 mr-1 text-emerald-600" />
               Template WA Client
             </Button>
           </div>
         </div>
       )}
-    </div>
+    </ClientCardShell>
   )
 }
 
@@ -383,7 +407,12 @@ interface BookingsClientProps {
   adminEmail: string
 }
 
-export function BookingsClient({ initialBookings, packages = [], categories = [], adminEmail }: BookingsClientProps) {
+export function BookingsClient({
+  initialBookings,
+  packages = [],
+  categories = [],
+  adminEmail,
+}: BookingsClientProps) {
   const [search, setSearch] = useState('')
   const [filterStatus, setFilterStatus] = useState<BookingStatus | 'all'>('all')
   const [filterCetak, setFilterCetak] = useState<CetakStatus | 'all' | 'ada_cetak'>('all')
@@ -414,7 +443,7 @@ export function BookingsClient({ initialBookings, packages = [], categories = []
     // Filter Cetak Foto
     const hasCetakPaket = Boolean(
       b.package_snapshot?.cetak_ukuran ||
-      (b.package_snapshot?.cetak_jumlah && b.package_snapshot.cetak_jumlah > 0)
+        (b.package_snapshot?.cetak_jumlah && b.package_snapshot.cetak_jumlah > 0)
     )
     const hasCetakAddon = (b.booking_addons || []).some(a => a.jenis === 'cetak')
     const hasCetak = hasCetakPaket || hasCetakAddon
@@ -467,26 +496,27 @@ export function BookingsClient({ initialBookings, packages = [], categories = []
         />
       )}
 
-      {/* Filter Header & Controls */}
-      <div className="flex flex-col gap-3 mb-6">
-        <div className="flex flex-col sm:flex-row gap-2.5">
-          {/* Search Input */}
-          <div className="relative flex-1">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[rgb(var(--color-text-muted))]" />
-            <input
-              type="text"
-              placeholder="Cari nama klien atau kode booking..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="w-full pl-10 pr-4 py-2.5 rounded-2xl border-2 border-[rgb(var(--color-border))] bg-[rgb(var(--color-surface))] text-sm focus:outline-none focus:border-[rgb(var(--color-forest))]"
-            />
-          </div>
+      {/* ── Filter Bar Ringkas (Search full-width + scrollable options) ── */}
+      <div className="flex flex-col gap-2.5 mb-4">
+        {/* Baris 1: Search Input Full-Width */}
+        <div className="relative w-full">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[rgb(var(--color-text-muted))]" />
+          <input
+            type="text"
+            placeholder="Cari nama klien atau kode booking..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="w-full pl-9 pr-3.5 py-2 text-sm rounded-lg border border-[rgb(var(--color-border))] bg-[rgb(var(--color-surface))] focus:outline-none focus:border-[rgb(var(--color-forest))] transition-colors"
+          />
+        </div>
 
-          {/* Filter Status Selector */}
+        {/* Baris 2: Controls dalam satu baris scrollable (tidak bertumpuk di mobile) */}
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
+          {/* Filter Status */}
           <select
             value={filterStatus}
             onChange={e => setFilterStatus(e.target.value as BookingStatus | 'all')}
-            className="px-4 py-2.5 rounded-2xl border-2 border-[rgb(var(--color-border))] bg-[rgb(var(--color-surface))] text-sm font-medium focus:outline-none focus:border-[rgb(var(--color-forest))]"
+            className="h-9 px-2.5 rounded-lg border border-[rgb(var(--color-border))] bg-[rgb(var(--color-surface))] text-xs font-medium focus:outline-none focus:border-[rgb(var(--color-forest))] shrink-0"
           >
             <option value="all">Semua Status</option>
             <option value="pending">Menunggu Konfirmasi</option>
@@ -495,11 +525,11 @@ export function BookingsClient({ initialBookings, packages = [], categories = []
             <option value="dibatalkan">Dibatalkan</option>
           </select>
 
-          {/* Filter Status Cetak Foto */}
+          {/* Filter Cetak */}
           <select
             value={filterCetak}
             onChange={e => setFilterCetak(e.target.value as CetakStatus | 'all' | 'ada_cetak')}
-            className="px-4 py-2.5 rounded-2xl border-2 border-[rgb(var(--color-border))] bg-[rgb(var(--color-surface))] text-sm font-medium focus:outline-none focus:border-[rgb(var(--color-forest))]"
+            className="h-9 px-2.5 rounded-lg border border-[rgb(var(--color-border))] bg-[rgb(var(--color-surface))] text-xs font-medium focus:outline-none focus:border-[rgb(var(--color-forest))] shrink-0"
           >
             <option value="all">Semua Cetak</option>
             <option value="ada_cetak">Ada Cetak Foto</option>
@@ -508,27 +538,24 @@ export function BookingsClient({ initialBookings, packages = [], categories = []
             <option value="selesai">Cetak: Selesai</option>
           </select>
 
-          {/* Toggle Kalender Modern */}
-          <Button
+          {/* Toggle Kalender Button */}
+          <button
             type="button"
-            variant="ghost"
             onClick={() => setShowCalendarView(v => !v)}
-            className={`rounded-2xl border-2 px-3.5 py-2.5 font-medium text-sm flex items-center gap-1.5 transition-colors ${
+            className={cn(
+              'h-9 px-2.5 rounded-lg border text-xs font-medium flex items-center gap-1.5 shrink-0 transition-colors',
               showCalendarView || filterTanggal
-                ? 'border-[rgb(var(--color-forest))] bg-[rgb(var(--color-forest)/0.08)] text-[rgb(var(--color-forest))] font-bold'
-                : 'border-[rgb(var(--color-border))] bg-[rgb(var(--color-surface))]'
-            }`}
+                ? 'border-[rgb(var(--color-forest))] bg-[rgb(var(--color-forest)/0.08)] text-[rgb(var(--color-forest))] font-semibold'
+                : 'border-[rgb(var(--color-border))] bg-[rgb(var(--color-surface))] text-[rgb(var(--color-text))]'
+            )}
           >
-            <CalendarDays className="w-4 h-4" />
+            <CalendarDays className="w-3.5 h-3.5" />
             <span>{filterTanggal ? `Filter: ${filterTanggal}` : 'Pilih Tanggal'}</span>
-          </Button>
-        </div>
+          </button>
 
-        {/* Quick Date Chips */}
-        <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
-          <span className="text-[rgb(var(--color-text-muted))] flex items-center gap-1 shrink-0 font-medium">
-            <Filter className="w-3 h-3" /> Quick Filter:
-          </span>
+          {/* Quick Filter Separator & Chips */}
+          <div className="h-4 w-px bg-[rgb(var(--color-border))] shrink-0 mx-0.5" />
+
           {quickDates.map(qd => {
             const isSelected = filterTanggal === qd.value
             return (
@@ -536,11 +563,12 @@ export function BookingsClient({ initialBookings, packages = [], categories = []
                 key={qd.label}
                 type="button"
                 onClick={() => setFilterTanggal(qd.value)}
-                className={`px-3 py-1.5 rounded-xl font-heading font-semibold transition-all shrink-0 border ${
+                className={cn(
+                  'h-9 px-3 rounded-lg text-xs font-medium transition-all shrink-0 border',
                   isSelected
-                    ? 'bg-[rgb(var(--color-forest))] text-white border-[rgb(var(--color-forest))] shadow-xs'
+                    ? 'bg-[rgb(var(--color-forest))] text-white border-[rgb(var(--color-forest))]'
                     : 'bg-[rgb(var(--color-surface))] text-[rgb(var(--color-text))] border-[rgb(var(--color-border))] hover:border-[rgb(var(--color-forest)/0.4)]'
-                }`}
+                )}
               >
                 {qd.label}
               </button>
@@ -548,7 +576,7 @@ export function BookingsClient({ initialBookings, packages = [], categories = []
           })}
         </div>
 
-        {/* Kalender Modern Popup Grid (jika toggle aktif) */}
+        {/* Kalender Popup Grid (jika toggle aktif) */}
         {showCalendarView && (
           <div className="mt-1">
             <AdminCalendarPicker
@@ -560,16 +588,16 @@ export function BookingsClient({ initialBookings, packages = [], categories = []
         )}
       </div>
 
-      {/* Timeline Jadwal Harian Modern */}
+      {/* ── Timeline Jadwal Harian (Compact) ── */}
       {activeDayBookings.length > 0 && (
-        <div className="mb-6 p-4 sm:p-5 rounded-3xl bg-[rgb(var(--color-surface))] border-2 border-[rgb(var(--color-forest)/0.25)] shadow-xs">
-          <div className="flex items-center justify-between mb-3.5">
+        <div className="mb-4 p-3 sm:p-4 rounded-xl bg-[rgb(var(--color-surface))] border border-[rgb(var(--color-border))]">
+          <div className="flex items-center justify-between mb-2.5">
             <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-xl bg-[rgb(var(--color-forest)/0.1)] text-[rgb(var(--color-forest))] flex items-center justify-center font-bold">
-                <Clock className="w-4 h-4" />
+              <div className="w-7 h-7 rounded-lg bg-[rgb(var(--color-forest)/0.08)] text-[rgb(var(--color-forest))] flex items-center justify-center font-bold">
+                <Clock className="w-3.5 h-3.5" />
               </div>
               <div>
-                <p className="font-heading font-bold text-sm text-[rgb(var(--color-text))]">
+                <p className="font-heading font-semibold text-xs sm:text-sm text-[rgb(var(--color-text))]">
                   Jadwal Sesi: {activeDate === today ? 'Hari Ini' : activeDate}
                 </p>
                 <p className="text-[11px] text-[rgb(var(--color-text-muted))]">
@@ -578,34 +606,39 @@ export function BookingsClient({ initialBookings, packages = [], categories = []
               </div>
             </div>
 
-            <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-[rgb(var(--color-forest))] text-white">
+            <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-[rgb(var(--color-forest)/0.1)] text-[rgb(var(--color-forest))] border border-[rgb(var(--color-forest)/0.2)]">
               {activeDate}
             </span>
           </div>
 
-          {/* Timeline Chips */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+          {/* Timeline Chips Grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             {activeDayBookings
               .sort((a, b) => a.jam_mulai.localeCompare(b.jam_mulai))
               .map(b => (
                 <div
                   key={b.id}
                   onClick={() => setSearch(b.kode)}
-                  className="p-3 rounded-2xl bg-[rgb(var(--color-cream))] border-2 border-[rgb(var(--color-border))] hover:border-[rgb(var(--color-forest))] cursor-pointer transition-all flex flex-col justify-between"
+                  className="p-2 sm:p-2.5 rounded-lg bg-[rgb(var(--color-cream-dark)/0.25)] border border-[rgb(var(--color-border))] hover:border-[rgb(var(--color-forest))] cursor-pointer transition-all flex flex-col justify-between"
                   title="Klik untuk filter booking ini"
                 >
                   <div className="flex items-center justify-between mb-1">
-                    <span className="font-heading font-black text-sm text-[rgb(var(--color-forest))] flex items-center gap-1">
-                      <Clock className="w-3.5 h-3.5" />
+                    <span className="font-heading font-semibold text-xs text-[rgb(var(--color-forest))] flex items-center gap-1">
+                      <Clock className="w-3 h-3" />
                       {b.jam_mulai}
                     </span>
-                    <span className={`text-[10px] px-1.5 py-0.2 rounded-md font-bold ${
-                      b.status === 'booking' ? 'bg-blue-100 text-blue-700' : 'bg-yellow-100 text-yellow-700'
-                    }`}>
-                      {b.status}
+                    <span
+                      className={cn(
+                        'text-[10px] px-1.5 py-0.2 rounded font-medium',
+                        b.status === 'booking'
+                          ? 'bg-emerald-100 text-emerald-800'
+                          : 'bg-amber-100 text-amber-800'
+                      )}
+                    >
+                      {b.status === 'booking' ? 'Konfirm' : 'Menunggu'}
                     </span>
                   </div>
-                  <p className="font-heading font-bold text-xs truncate text-[rgb(var(--color-text))]">
+                  <p className="font-heading font-semibold text-xs truncate text-[rgb(var(--color-text))]">
                     {b.nama_klien}
                   </p>
                   <p className="text-[10px] text-[rgb(var(--color-text-muted))] truncate mt-0.5">
@@ -617,16 +650,16 @@ export function BookingsClient({ initialBookings, packages = [], categories = []
         </div>
       )}
 
-      {/* Booking list */}
-      <div className="flex flex-col gap-3">
-        <div className="flex items-center justify-between px-1 text-xs text-[rgb(var(--color-text-muted))] font-medium">
+      {/* ── Booking List ── */}
+      <div className="flex flex-col gap-2.5">
+        <div className="flex items-center justify-between px-1 text-xs text-[rgb(var(--color-text-muted))] font-normal">
           <span className="flex items-center gap-1">
             <Layers className="w-3.5 h-3.5" /> Menampilkan {filtered.length} booking
           </span>
           {filterTanggal && (
             <button
               onClick={() => setFilterTanggal('')}
-              className="text-[rgb(var(--color-forest))] font-bold hover:underline"
+              className="text-[rgb(var(--color-forest))] font-semibold hover:underline"
             >
               Hapus filter tanggal
             </button>
@@ -634,9 +667,9 @@ export function BookingsClient({ initialBookings, packages = [], categories = []
         </div>
 
         {filtered.length === 0 ? (
-          <div className="rounded-3xl border-2 border-dashed border-[rgb(var(--color-border))] p-12 text-center bg-[rgb(var(--color-surface))]">
-            <Calendar className="w-10 h-10 text-[rgb(var(--color-text-muted))] mx-auto mb-2 opacity-50" />
-            <p className="font-heading font-bold text-base text-[rgb(var(--color-text))]">
+          <div className="rounded-xl border border-dashed border-[rgb(var(--color-border))] p-8 sm:p-12 text-center bg-[rgb(var(--color-surface))]">
+            <Calendar className="w-8 h-8 text-[rgb(var(--color-text-muted))] mx-auto mb-2 opacity-40" />
+            <p className="font-heading font-semibold text-sm text-[rgb(var(--color-text))]">
               Tidak Ada Booking Ditemukan
             </p>
             <p className="text-xs text-[rgb(var(--color-text-muted))] mt-1 max-w-sm mx-auto">
