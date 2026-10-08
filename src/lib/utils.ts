@@ -1,6 +1,12 @@
 import { clsx, type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
 
+export const DEFAULT_MAX_BOOKING_PER_SLOT = 1
+
+export const MAX_BOOKING_PER_SLOT =
+  Number(process.env.MAX_BOOKING_PER_SLOT || process.env.NEXT_PUBLIC_MAX_BOOKING_PER_SLOT) ||
+  DEFAULT_MAX_BOOKING_PER_SLOT
+
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
@@ -43,19 +49,101 @@ export function minutesToTime(minutes: number): string {
   return `${h}:${m}`
 }
 
+/**
+ * Normalisasi format jam ke HH:mm (cth: "13:00:00" -> "13:00", "9:00" -> "09:00")
+ */
+export function normalizeTime(time?: string | null): string {
+  if (!time || typeof time !== 'string') return ''
+  const trimmed = time.trim()
+  const parts = trimmed.split(':')
+  if (parts.length >= 2) {
+    const h = parts[0].padStart(2, '0')
+    const m = parts[1].padStart(2, '0')
+    return `${h}:${m}`
+  }
+  return trimmed
+}
+
+export interface BookedSlotItem {
+  jam_mulai: string
+  durasi_total?: number
+}
+
+/**
+ * Menghitung berapa banyak booking yang memiliki waktu mulai (start time) yang sama persis
+ */
+export function countBookingsForSlot(
+  slot: string,
+  bookings: (BookedSlotItem | string)[]
+): number {
+  const target = normalizeTime(slot)
+  if (!target || !Array.isArray(bookings)) return 0
+
+  return bookings.filter(b => {
+    const jam = typeof b === 'string' ? b : b?.jam_mulai
+    return normalizeTime(jam) === target
+  }).length
+}
+
+/**
+ * Mengecek apakah slot jam penuh / terblokir.
+ *
+ * ATURAN BARU:
+ * Slot dianggap penuh BUKAN berdasarkan overlap durasi waktu, melainkan HANYA jika:
+ * 1. Ada booking dengan waktu mulai (start time) yang sama persis, DAN
+ * 2. Jumlah booking pada start time tersebut sudah mencapai batas kapasitas (maxCapacity / MAX_BOOKING_PER_SLOT).
+ *
+ * Contoh: Jika ada booking jam 13:00 berdurasi 45 menit, slot jam 13:30 TETAP TERSEDIA.
+ */
 export function isSlotBlocked(
   slot: string,
+  durasiOrBookings: number | (BookedSlotItem | string)[],
+  bookingsOrCapacity?: (BookedSlotItem | string)[] | number,
+  maxCapacity: number = MAX_BOOKING_PER_SLOT
+): boolean {
+  let bookings: (BookedSlotItem | string)[] = []
+  let capacity = maxCapacity
+
+  if (typeof durasiOrBookings === 'number') {
+    bookings = Array.isArray(bookingsOrCapacity) ? bookingsOrCapacity : []
+    capacity = typeof maxCapacity === 'number' ? maxCapacity : MAX_BOOKING_PER_SLOT
+  } else if (Array.isArray(durasiOrBookings)) {
+    bookings = durasiOrBookings
+    capacity = typeof bookingsOrCapacity === 'number' ? bookingsOrCapacity : MAX_BOOKING_PER_SLOT
+  }
+
+  const count = countBookingsForSlot(slot, bookings)
+  return count >= capacity
+}
+
+/**
+ * Mengecek apakah sesi pemotretan melewati jam tutup studio
+ */
+export function isSlotExceedingClosingTime(
+  slot: string,
   durasiMenit: number,
-  blockedRanges: { jam_mulai: string; durasi_total: number }[]
+  jamTutup: string = '20:00'
 ): boolean {
   const slotStart = timeToMinutes(slot)
-  const slotEnd = slotStart + durasiMenit
+  const slotEnd = slotStart + Number(durasiMenit || 0)
+  const closingMinutes = timeToMinutes(jamTutup)
+  return slotEnd > closingMinutes
+}
 
-  return blockedRanges.some(({ jam_mulai, durasi_total }) => {
-    const bStart = timeToMinutes(jam_mulai)
-    const bEnd = bStart + durasi_total
-    return slotStart < bEnd && slotEnd > bStart
-  })
+/**
+ * Mengecek apakah waktu sesi berada dalam rentang jam operasional (buka s/d tutup)
+ */
+export function isSlotWithinOperatingHours(
+  slot: string,
+  durasiMenit: number,
+  jamBuka: string = '08:00',
+  jamTutup: string = '20:00'
+): boolean {
+  const slotStart = timeToMinutes(slot)
+  const slotEnd = slotStart + Number(durasiMenit || 0)
+  const openingMinutes = timeToMinutes(jamBuka)
+  const closingMinutes = timeToMinutes(jamTutup)
+  return slotStart >= openingMinutes && slotEnd <= closingMinutes
 }
 
 export function buildWAMessage(params: {

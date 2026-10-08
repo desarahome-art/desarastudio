@@ -3,7 +3,12 @@
 import { createAdminClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
 import type { BookingFormData, BookingStatus, CetakStatus, Package, ClosedDateItem } from '@/types'
-import { isSlotBlocked, generateTimeSlots, parseWaitingListInfo } from '@/lib/utils'
+import {
+  isSlotBlocked,
+  generateTimeSlots,
+  parseWaitingListInfo,
+  isSlotWithinOperatingHours,
+} from '@/lib/utils'
 
 // Helper to check if a date is closed by studio admin
 async function checkIsDateClosed(supabase: Awaited<ReturnType<typeof createAdminClient>>, tanggal: string): Promise<ClosedDateItem | null> {
@@ -76,6 +81,27 @@ export async function submitBooking(formData: BookingFormData) {
     formData.addons
       .filter(a => a.addon.jenis === 'waktu')
       .reduce((sum, a) => sum + a.jumlah * 15, 0)
+
+  // 0b. Cek jam operasional studio & batas jam tutup
+  const { data: opSettings } = await supabase
+    .from('settings')
+    .select('key, value')
+    .in('key', ['jam_buka', 'jam_tutup'])
+
+  let jamBuka = '08:00'
+  let jamTutup = '20:00'
+  if (opSettings) {
+    for (const s of opSettings) {
+      if (s.key === 'jam_buka' && typeof s.value === 'string') jamBuka = s.value
+      if (s.key === 'jam_tutup' && typeof s.value === 'string') jamTutup = s.value
+    }
+  }
+
+  if (!isSlotWithinOperatingHours(jamMulai, durasiTotal, jamBuka, jamTutup)) {
+    return {
+      error: `Waktu sesi (${jamMulai} WIB dengan durasi ${durasiTotal} menit) berada di luar jam operasional atau melewati jam tutup studio (${jamBuka} - ${jamTutup}).`,
+    }
+  }
 
   const { data: existingBookings } = await supabase
     .from('bookings')
@@ -767,6 +793,20 @@ export async function updateBookingSchedule(
   // Bangun catatan riwayat
   const changes: string[] = []
   if (existing.tanggal !== tanggal || existing.jam_mulai !== jamMulai) {
+    const effectiveDuration = (updates.durasi_total as number) || existing.durasi_total || 30
+
+    // Cek ketersediaan slot (kecuali booking yang sedang di-edit)
+    const { data: clashingBookings } = await supabase
+      .from('bookings')
+      .select('jam_mulai, durasi_total')
+      .eq('tanggal', tanggal)
+      .in('status', ['pending', 'booking'])
+      .neq('id', bookingId)
+
+    if (clashingBookings && isSlotBlocked(jamMulai, effectiveDuration, clashingBookings)) {
+      return { error: 'Slot jam pada tanggal tersebut sudah dipesan. Pilih jam lain.' }
+    }
+
     changes.push(`Jadwal: ${existing.tanggal} ${existing.jam_mulai} ➔ ${tanggal} ${jamMulai}`)
   }
   if (packageChangeNote) {

@@ -29,6 +29,7 @@ export interface Settings {
   jam_buka: string
   jam_tutup: string
   slot_interval: number
+  max_booking_per_slot?: number
   backgrounds: (string | BackgroundItem)[]
   closed_dates?: ClosedDateItem[]
 }
