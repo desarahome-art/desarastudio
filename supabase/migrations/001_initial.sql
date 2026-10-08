@@ -173,23 +173,45 @@ CREATE OR REPLACE FUNCTION generate_kode_booking()
 RETURNS TRIGGER LANGUAGE plpgsql AS $$
 DECLARE
   tgl TEXT;
+  prefix TEXT;
+  max_seq INT := 0;
   seq INT;
-  kode TEXT;
+  candidate_kode TEXT;
 BEGIN
-  tgl := TO_CHAR(NOW(), 'YYYYMMDD');
-  SELECT COUNT(*) + 1 INTO seq
-    FROM bookings
-    WHERE DATE(created_at) = CURRENT_DATE;
-  kode := 'DSR-' || tgl || '-' || LPAD(seq::TEXT, 3, '0');
-  NEW.kode := kode;
+  IF NEW.kode IS NOT NULL AND TRIM(NEW.kode) <> '' THEN
+    RETURN NEW;
+  END IF;
+
+  tgl := TO_CHAR(NOW() AT TIME ZONE 'Asia/Jakarta', 'YYYYMMDD');
+  prefix := 'DSR-' || tgl || '-';
+
+  SELECT COALESCE(
+    MAX(
+      SUBSTRING(kode FROM LENGTH(prefix) + 1)::INT
+    ),
+    0
+  )
+  INTO max_seq
+  FROM bookings
+  WHERE kode ~ ('^' || prefix || '[0-9]+$');
+
+  seq := max_seq + 1;
+  candidate_kode := prefix || LPAD(seq::TEXT, 3, '0');
+
+  WHILE EXISTS (SELECT 1 FROM bookings WHERE kode = candidate_kode) LOOP
+    seq := seq + 1;
+    candidate_kode := prefix || LPAD(seq::TEXT, 3, '0');
+  END LOOP;
+
+  NEW.kode := candidate_kode;
   RETURN NEW;
 END;
 $$;
 
+DROP TRIGGER IF EXISTS bookings_kode ON bookings;
 CREATE TRIGGER bookings_kode
   BEFORE INSERT ON bookings
   FOR EACH ROW
-  WHEN (NEW.kode IS NULL OR NEW.kode = '')
   EXECUTE FUNCTION generate_kode_booking();
 
 -- ============================================================
