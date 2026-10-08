@@ -7,11 +7,14 @@ import {
   updateCetakStatus,
   getBuktiTransferSignedUrl,
   deleteBooking,
+  kurangiAddonLapangan,
 } from '@/app/actions'
+import { getMenitPerUnit } from '@/lib/addon-calc'
 import { Button } from '@/components/ui/Button'
 import { AdminCalendarPicker } from './AdminCalendarPicker'
 import { RescheduleModal } from './RescheduleModal'
 import { WhatsAppTemplateModal } from './WhatsAppTemplateModal'
+import { AddOnLapanganModal } from './AddOnLapanganModal'
 import {
   BookingStatusBadge,
   CetakBadge,
@@ -34,9 +37,12 @@ import {
   Layers,
   Printer,
   Trash2,
+  PlusCircle,
+  Sparkles,
+  Minus,
 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
-import type { Booking, BookingStatus, CetakStatus, Package, Category } from '@/types'
+import type { Booking, BookingStatus, CetakStatus, Package, Category, Addon, AddonCategory, BackgroundItem } from '@/types'
 
 interface BookingRowProps {
   booking: Booking
@@ -44,6 +50,7 @@ interface BookingRowProps {
   onRefresh: () => void
   onOpenReschedule: (booking: Booking) => void
   onOpenWhatsApp: (booking: Booking) => void
+  onOpenAddonLapangan: (booking: Booking) => void
 }
 
 function BookingRow({
@@ -52,6 +59,7 @@ function BookingRow({
   onRefresh,
   onOpenReschedule,
   onOpenWhatsApp,
+  onOpenAddonLapangan,
 }: BookingRowProps) {
   const [expanded, setExpanded] = useState(false)
   const [isPending, startTransition] = useTransition()
@@ -103,6 +111,29 @@ function BookingRow({
     }
   }
 
+  const hasAddonLapangan = (booking.booking_addons || []).some(a => a.ditambah_oleh_admin)
+
+  const handleKurangiAddonLapangan = async (addonId: string, namaAddon: string, jumlahKurang: number, jumlahSekarang: number) => {
+    const hapusSemua = jumlahKurang >= jumlahSekarang
+    const confirmed = window.confirm(
+      hapusSemua
+        ? `Hapus add-on "${namaAddon}" (${jumlahSekarang}x) yang ditambahkan di lapangan?\n\nTotal harga dan durasi booking akan disesuaikan otomatis.`
+        : `Kurangi add-on "${namaAddon}" sebanyak ${jumlahKurang} (dari ${jumlahSekarang} menjadi ${jumlahSekarang - jumlahKurang})?\n\nTotal harga dan durasi booking akan disesuaikan otomatis.`
+    )
+    if (!confirmed) return
+
+    try {
+      const res = await kurangiAddonLapangan(addonId, jumlahKurang)
+      if (res.error) {
+        alert(`Gagal menghapus add-on: ${res.error}`)
+      } else {
+        onRefresh()
+      }
+    } catch (err: unknown) {
+      alert((err as Error)?.message || 'Terjadi kesalahan saat membatalkan add-on.')
+    }
+  }
+
   const handleViewBukti = async () => {
     if (!booking.bukti_transfer) return
     setLoadingBukti(true)
@@ -146,6 +177,11 @@ function BookingRow({
               </span>
               <BookingStatusBadge status={booking.status} />
               {hasCetak && <CetakBadge status={booking.status_cetak} />}
+              {hasAddonLapangan && (
+                <span className="text-[10px] text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded-full font-semibold border border-blue-200">
+                  Tambahan di lapangan
+                </span>
+              )}
             </div>
 
             {/* Baris 2: Meta line (kode · kategori – paket) */}
@@ -236,6 +272,68 @@ function BookingRow({
                   {loadingBukti ? 'Memuat gambar...' : 'Lihat Bukti Transfer'}
                 </button>
               </ClientCardField>
+            )}
+
+            {/* ── Section Rincian Add-on (termasuk Add-on Lapangan) ── */}
+            {booking.booking_addons && booking.booking_addons.length > 0 && (
+              <div className="sm:col-span-2 rounded-lg border border-[rgb(var(--color-border))] bg-[rgb(var(--color-cream-dark)/0.2)] p-2.5 sm:p-3">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-semibold text-[rgb(var(--color-text))] flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-[rgb(var(--color-forest))]" />
+                    Rincian Add-on ({booking.booking_addons.length})
+                  </span>
+                </div>
+                <div className="space-y-1.5">
+                  {booking.booking_addons.map(a => (
+                    <div
+                      key={a.id}
+                      className="flex items-center justify-between gap-2 text-xs py-1 px-2.5 rounded-lg bg-[rgb(var(--color-surface))] border border-[rgb(var(--color-border)/0.6)]"
+                    >
+                      <div className="flex items-center gap-1.5 flex-wrap min-w-0">
+                        <span className="font-medium text-[rgb(var(--color-text))]">
+                          {a.nama} ({a.jumlah}x)
+                        </span>
+                        {a.jenis === 'waktu' && (
+                          <span className="text-[10px] text-amber-800 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200">
+                            +{getMenitPerUnit(a) * a.jumlah} mnt
+                          </span>
+                        )}
+                        {a.ditambah_oleh_admin && (
+                          <span className="text-[10px] text-blue-700 bg-blue-50 px-1.5 py-0.5 rounded-full font-semibold border border-blue-200">
+                            Di Lapangan
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="font-mono text-[rgb(var(--color-forest))] font-medium">
+                          {formatRupiah(a.harga * a.jumlah)}
+                        </span>
+                        {a.ditambah_oleh_admin && a.jumlah > 1 && (booking.status === 'pending' || booking.status === 'booking') && (
+                          <button
+                            type="button"
+                            title="Kurangi 1 unit add-on lapangan ini"
+                            onClick={() => handleKurangiAddonLapangan(a.id, a.nama, 1, a.jumlah)}
+                            className="p-1 text-amber-600 hover:text-amber-800 hover:bg-amber-50 rounded-md transition-colors"
+                          >
+                            <Minus className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        {a.ditambah_oleh_admin && (booking.status === 'pending' || booking.status === 'booking') && (
+                          <button
+                            type="button"
+                            title="Hapus add-on lapangan ini"
+                            onClick={() => handleKurangiAddonLapangan(a.id, a.nama, a.jumlah, a.jumlah)}
+                            className="p-1 text-rose-500 hover:text-rose-700 hover:bg-rose-50 rounded-md transition-colors"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
 
             {/* ── Section Info & Status Cetak Foto (Segmented Control Kompak) ── */}
@@ -343,6 +441,19 @@ function BookingRow({
 
               {/* Baris Secondary & Destructive di Mobile / inline di desktop */}
               <div className="flex items-center gap-2 flex-wrap">
+                {/* Tambah Add-on di Lapangan */}
+                {(booking.status === 'pending' || booking.status === 'booking') && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => onOpenAddonLapangan(booking)}
+                    className="rounded-lg h-9 min-h-[40px] text-xs border border-[rgb(var(--color-forest)/0.4)] text-[rgb(var(--color-forest))] bg-[rgb(var(--color-forest)/0.04)] hover:bg-[rgb(var(--color-forest)/0.1)] font-semibold justify-center flex-1 sm:flex-none"
+                  >
+                    <PlusCircle className="w-3.5 h-3.5 mr-1" />
+                    + Add-on (Di Lapangan)
+                  </Button>
+                )}
+
                 <Button
                   size="sm"
                   variant="ghost"
@@ -404,6 +515,10 @@ interface BookingsClientProps {
   initialBookings: Booking[]
   packages?: Package[]
   categories?: Category[]
+  addons?: Addon[]
+  addonCategories?: AddonCategory[]
+  availableBackgrounds?: BackgroundItem[]
+  jamTutup?: string
   adminEmail: string
 }
 
@@ -411,6 +526,10 @@ export function BookingsClient({
   initialBookings,
   packages = [],
   categories = [],
+  addons = [],
+  addonCategories = [],
+  availableBackgrounds = [],
+  jamTutup = '20:00',
   adminEmail,
 }: BookingsClientProps) {
   const [search, setSearch] = useState('')
@@ -420,6 +539,7 @@ export function BookingsClient({
   const [showCalendarView, setShowCalendarView] = useState(false)
   const [rescheduleTarget, setRescheduleTarget] = useState<Booking | null>(null)
   const [whatsAppTarget, setWhatsAppTarget] = useState<Booking | null>(null)
+  const [addonLapanganTarget, setAddonLapanganTarget] = useState<Booking | null>(null)
   const router = useRouter()
 
   // Hitung jumlah booking per tanggal untuk indikator kalender
@@ -493,6 +613,27 @@ export function BookingsClient({
         <WhatsAppTemplateModal
           booking={whatsAppTarget}
           onClose={() => setWhatsAppTarget(null)}
+        />
+      )}
+
+      {/* Tambah Add-on di Lapangan Modal */}
+      {addonLapanganTarget && (
+        <AddOnLapanganModal
+          booking={addonLapanganTarget}
+          addons={addons.filter(
+            a =>
+              !addonLapanganTarget.category_id ||
+              addonCategories.some(
+                ac => ac.addon_id === a.id && ac.category_id === addonLapanganTarget.category_id
+              )
+          )}
+          availableBackgrounds={availableBackgrounds}
+          jamTutup={jamTutup}
+          onClose={() => setAddonLapanganTarget(null)}
+          onSuccess={() => {
+            setAddonLapanganTarget(null)
+            router.refresh()
+          }}
         />
       )}
 
@@ -685,6 +826,7 @@ export function BookingsClient({
               onRefresh={() => router.refresh()}
               onOpenReschedule={item => setRescheduleTarget(item)}
               onOpenWhatsApp={item => setWhatsAppTarget(item)}
+              onOpenAddonLapangan={item => setAddonLapanganTarget(item)}
             />
           ))
         )}

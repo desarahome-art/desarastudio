@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { formatRupiah } from '@/lib/utils'
+import { getMenitPerUnit, labelSatuanWaktu } from '@/lib/addon-calc'
 import { Plus, Trash2, Pencil, ToggleLeft, ToggleRight } from 'lucide-react'
 import type { Addon, Category, AddonJenis } from '@/types'
 
@@ -28,30 +29,64 @@ export function AddonsClient({ initialAddons, categories, initialAddonCategories
   const [editAddon, setEditAddon] = useState<Addon | null>(null)
   const [showForm, setShowForm] = useState(false)
 
-  const emptyForm = { jenis: 'waktu' as AddonJenis, nama: '', satuan: '', harga: '', maks: '5', ukuran: '' }
+  const emptyForm = { jenis: 'waktu' as AddonJenis, nama: '', satuan: '+15 menit', harga: '', maks: '5', ukuran: '', menit_per_unit: '15' }
   const [form, setForm] = useState(emptyForm)
+  const [formError, setFormError] = useState('')
+
+  const pesanGagalSimpan = (msg?: string) =>
+    msg && /menit_per_unit/i.test(msg)
+      ? 'Gagal menyimpan: kolom "menit_per_unit" belum ada di database. Jalankan migrasi supabase/migrations/005_addon_lapangan_menit.sql di Supabase SQL Editor terlebih dahulu.'
+      : `Gagal menyimpan add-on: ${msg || 'tidak ada respon dari database'}`
 
   const handleSave = async () => {
+    setFormError('')
+    if (!form.nama.trim()) {
+      setFormError('Nama add-on wajib diisi.')
+      return
+    }
+
+    let menit = 15
+    if (form.jenis === 'waktu') {
+      menit = parseInt(form.menit_per_unit, 10)
+      if (isNaN(menit) || menit < 1) {
+        setFormError('Menit per unit harus berupa angka bulat dan minimal 1 menit.')
+        return
+      }
+    }
+
     const payload = {
       jenis: form.jenis,
-      nama: form.nama,
-      satuan: form.satuan,
+      nama: form.nama.trim(),
+      // Untuk add-on waktu, satuan selalu mengikuti angka menit_per_unit
+      satuan: form.jenis === 'waktu' ? `+${menit} menit` : form.satuan.trim(),
       harga: parseInt(form.harga) || 0,
       maks: parseInt(form.maks) || 5,
-      ukuran: form.ukuran || null,
+      ukuran: form.ukuran?.trim() || null,
+      menit_per_unit: form.jenis === 'waktu' ? menit : 15,
     }
 
     if (editAddon) {
-      const { data } = await supabase.from('addons').update(payload).eq('id', editAddon.id).select().single()
-      if (data) setAddons(prev => prev.map(a => a.id === editAddon.id ? data : a))
+      const { data, error } = await supabase.from('addons').update(payload).eq('id', editAddon.id).select().single()
+      if (error || !data) {
+        // Jangan tutup form: tampilkan alasan gagal simpan
+        setFormError(pesanGagalSimpan(error?.message))
+        return
+      }
+      setAddons(prev => prev.map(a => a.id === editAddon.id ? data : a))
     } else {
       const urutan = Math.max(0, ...addons.map(a => a.urutan)) + 1
-      const { data } = await supabase.from('addons').insert({ ...payload, urutan }).select().single()
-      if (data) {
-        setAddons(prev => [...prev, data])
-        // Aktifkan untuk semua kategori secara default
-        const inserts = categories.map(c => ({ addon_id: data.id, category_id: c.id }))
-        await supabase.from('addon_categories').insert(inserts)
+      const { data, error } = await supabase.from('addons').insert({ ...payload, urutan }).select().single()
+      if (error || !data) {
+        setFormError(pesanGagalSimpan(error?.message))
+        return
+      }
+      setAddons(prev => [...prev, data])
+      // Aktifkan untuk semua kategori secara default
+      const inserts = categories.map(c => ({ addon_id: data.id, category_id: c.id }))
+      const { error: catError } = await supabase.from('addon_categories').insert(inserts)
+      if (catError) {
+        alert(`Add-on tersimpan, tetapi gagal mengaktifkan kategori: ${catError.message}`)
+      } else {
         setAddonCats(prev => [...prev, ...inserts])
       }
     }
@@ -62,7 +97,11 @@ export function AddonsClient({ initialAddons, categories, initialAddonCategories
 
   const handleDelete = async (id: string) => {
     if (!confirm('Hapus add-on ini?')) return
-    await supabase.from('addons').delete().eq('id', id)
+    const { error } = await supabase.from('addons').delete().eq('id', id)
+    if (error) {
+      alert(`Gagal menghapus add-on: ${error.message}`)
+      return
+    }
     setAddons(prev => prev.filter(a => a.id !== id))
     setAddonCats(prev => prev.filter(ac => ac.addon_id !== id))
   }
@@ -70,13 +109,21 @@ export function AddonsClient({ initialAddons, categories, initialAddonCategories
   const toggleCategory = async (addonId: string, catId: string) => {
     const exists = addonCats.some(ac => ac.addon_id === addonId && ac.category_id === catId)
     if (exists) {
-      await supabase.from('addon_categories')
+      const { error } = await supabase.from('addon_categories')
         .delete()
         .eq('addon_id', addonId)
         .eq('category_id', catId)
+      if (error) {
+        alert(`Gagal menonaktifkan kategori: ${error.message}`)
+        return
+      }
       setAddonCats(prev => prev.filter(ac => !(ac.addon_id === addonId && ac.category_id === catId)))
     } else {
-      await supabase.from('addon_categories').insert({ addon_id: addonId, category_id: catId })
+      const { error } = await supabase.from('addon_categories').insert({ addon_id: addonId, category_id: catId })
+      if (error) {
+        alert(`Gagal mengaktifkan kategori: ${error.message}`)
+        return
+      }
       setAddonCats(prev => [...prev, { addon_id: addonId, category_id: catId }])
     }
   }
@@ -84,7 +131,7 @@ export function AddonsClient({ initialAddons, categories, initialAddonCategories
   return (
     <div className="flex flex-col gap-4">
       <div className="flex justify-end">
-        <Button size="sm" onClick={() => { setShowForm(true); setEditAddon(null); setForm(emptyForm) }}>
+        <Button size="sm" onClick={() => { setShowForm(true); setEditAddon(null); setForm(emptyForm); setFormError('') }}>
           <Plus className="w-4 h-4" /> Tambah Add-on
         </Button>
       </div>
@@ -93,19 +140,55 @@ export function AddonsClient({ initialAddons, categories, initialAddonCategories
       {(showForm || editAddon) && (
         <div className="rounded-2xl border-2 border-[rgb(var(--color-forest)/0.3)] p-4 bg-[rgb(var(--color-forest)/0.04)]">
           <h3 className="font-heading font-semibold mb-3">{editAddon ? 'Edit Add-on' : 'Tambah Add-on'}</h3>
+          {formError && (
+            <div className="mb-3 px-3 py-2 rounded-xl bg-red-50 text-red-600 text-xs font-medium border border-red-200">
+              {formError}
+            </div>
+          )}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="text-sm font-medium mb-1.5 block">Jenis</label>
               <select
                 value={form.jenis}
-                onChange={e => setForm(f => ({ ...f, jenis: e.target.value as AddonJenis }))}
+                onChange={e => {
+                  const j = e.target.value as AddonJenis
+                  setForm(f => ({
+                    ...f,
+                    jenis: j,
+                    satuan: j === 'waktu' ? `+${f.menit_per_unit || 15} menit` : f.satuan,
+                  }))
+                }}
                 className="w-full px-4 py-2.5 rounded-xl border-2 border-[rgb(var(--color-border))] bg-[rgb(var(--color-surface))] text-sm focus:outline-none focus:border-[rgb(var(--color-forest))]"
               >
                 {jenisOptions.map(j => <option key={j.value} value={j.value}>{j.label}</option>)}
               </select>
             </div>
             <Input label="Nama" value={form.nama} onChange={e => setForm(f => ({ ...f, nama: e.target.value }))} />
-            <Input label="Satuan (cth. +15 menit)" value={form.satuan} onChange={e => setForm(f => ({ ...f, satuan: e.target.value }))} />
+            
+            {form.jenis === 'waktu' && (
+              <Input
+                label="Menit per unit *"
+                type="number"
+                min={1}
+                value={form.menit_per_unit}
+                onChange={e => {
+                  const m = e.target.value
+                  setForm(f => ({
+                    ...f,
+                    menit_per_unit: m,
+                    satuan: m && Number(m) > 0 ? `+${m} menit` : f.satuan,
+                  }))
+                }}
+                hint="Durasi tambahan waktu dalam satuan menit (minimal 1)"
+              />
+            )}
+
+            <Input
+              label="Satuan Tampilan"
+              placeholder={form.jenis === 'waktu' ? '+15 menit' : '+1 orang'}
+              value={form.satuan}
+              onChange={e => setForm(f => ({ ...f, satuan: e.target.value }))}
+            />
             <Input label="Harga per satuan (Rp)" type="number" value={form.harga} onChange={e => setForm(f => ({ ...f, harga: e.target.value }))} />
             <Input label="Maks. penambahan" type="number" value={form.maks} onChange={e => setForm(f => ({ ...f, maks: e.target.value }))} />
             {form.jenis === 'cetak' && (
@@ -114,7 +197,7 @@ export function AddonsClient({ initialAddons, categories, initialAddonCategories
           </div>
           <div className="flex gap-2 mt-3">
             <Button size="sm" onClick={handleSave}>Simpan</Button>
-            <Button size="sm" variant="ghost" onClick={() => { setShowForm(false); setEditAddon(null) }}>Batal</Button>
+            <Button size="sm" variant="ghost" onClick={() => { setShowForm(false); setEditAddon(null); setForm(emptyForm); setFormError('') }}>Batal</Button>
           </div>
         </div>
       )}
@@ -128,7 +211,8 @@ export function AddonsClient({ initialAddons, categories, initialAddonCategories
               <div>
                 <p className="font-heading font-bold">{addon.nama}</p>
                 <p className="text-xs text-[rgb(var(--color-text-muted))]">
-                  {addon.jenis} · {addon.satuan} · {formatRupiah(addon.harga)}/satuan · Maks {addon.maks}
+                  {addon.jenis}
+                  {addon.jenis === 'waktu' && ` (${getMenitPerUnit(addon)} mnt/unit)`} · {addon.jenis === 'waktu' ? labelSatuanWaktu(addon) : addon.satuan} · {formatRupiah(addon.harga)}/satuan · Maks {addon.maks}
                   {addon.ukuran && ` · ${addon.ukuran}`}
                 </p>
               </div>
@@ -136,8 +220,17 @@ export function AddonsClient({ initialAddons, categories, initialAddonCategories
                 <button
                   onClick={() => {
                     setEditAddon(addon)
-                    setForm({ jenis: addon.jenis, nama: addon.nama, satuan: addon.satuan, harga: String(addon.harga), maks: String(addon.maks), ukuran: addon.ukuran || '' })
+                    setForm({
+                      jenis: addon.jenis,
+                      nama: addon.nama,
+                      satuan: addon.satuan,
+                      harga: String(addon.harga),
+                      maks: String(addon.maks),
+                      ukuran: addon.ukuran || '',
+                      menit_per_unit: String(getMenitPerUnit({ ...addon, jenis: 'waktu' })),
+                    })
                     setShowForm(false)
+                    setFormError('')
                   }}
                   className="p-1.5 hover:text-[rgb(var(--color-forest))]"
                 >

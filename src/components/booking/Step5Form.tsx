@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/Button'
 import { Input, Textarea } from '@/components/ui/Input'
 import { formatRupiah } from '@/lib/utils'
+import { getMenitPerUnit, labelSatuanWaktu } from '@/lib/addon-calc'
 import { getAvailableSlots } from '@/app/actions'
 import { Minus, Plus, ArrowRight, ShieldCheck, X } from 'lucide-react'
 import { BackgroundSelector } from './BackgroundSelector'
@@ -109,7 +110,7 @@ export function Step5Form({
   // Hitung durasi total dan kuota background dari paket + add-on
   const addonsWaktu = addons.filter(a => a.jenis === 'waktu')
   const waktuExtra = addonsWaktu.reduce(
-    (sum, a) => sum + (addonMap[a.id] || 0) * 15,
+    (sum, a) => sum + (addonMap[a.id] || 0) * getMenitPerUnit(a),
     0
   )
   const durasiTotal = pkg.durasi_menit + waktuExtra
@@ -348,7 +349,7 @@ export function Step5Form({
                           )}
                         </div>
                         <p className="text-xs text-[rgb(var(--color-text-muted))] mt-0.5">
-                          {addon.satuan} •{' '}
+                          {(addon.jenis === 'waktu' ? labelSatuanWaktu(addon) : addon.satuan)} •{' '}
                           <span className="font-semibold text-[rgb(var(--color-forest))]">
                             {formatRupiah(addon.harga)}
                           </span>
@@ -387,7 +388,7 @@ export function Step5Form({
             .map(a => (
               <div key={a.id} className="flex justify-between text-xs mb-1.5 text-[rgb(var(--color-text-muted))]">
                 <span>
-                  {a.nama} ({addonMap[a.id]} {a.satuan})
+                  {a.nama} ({addonMap[a.id]} × {a.jenis === 'waktu' ? labelSatuanWaktu(a) : a.satuan})
                 </span>
                 <span className="font-medium text-[rgb(var(--color-text))]">
                   {formatRupiah(a.harga * addonMap[a.id])}

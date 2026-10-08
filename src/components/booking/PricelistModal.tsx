@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/Button'
 import { formatRupiah } from '@/lib/utils'
+import { labelSatuanWaktu } from '@/lib/addon-calc'
 import {
   X,
   Sparkles,
@@ -322,7 +323,7 @@ export function PricelistModal({
                             {addon.nama}
                           </p>
                           <span className="text-[11px] text-[rgb(var(--color-text-muted))]">
-                            {addon.satuan} {addon.ukuran ? `· ${addon.ukuran}` : ''}
+                            {addon.jenis === 'waktu' ? labelSatuanWaktu(addon) : addon.satuan} {addon.ukuran ? `· ${addon.ukuran}` : ''}
                           </span>
                         </div>
                       </div>
@@ -332,7 +333,7 @@ export function PricelistModal({
                           +{formatRupiah(addon.harga)}
                         </p>
                         <span className="text-[10px] text-[rgb(var(--color-text-muted))]">
-                          / {addon.satuan}
+                          / {addon.jenis === 'waktu' ? labelSatuanWaktu(addon) : addon.satuan}
                         </span>
                       </div>
                     </div>

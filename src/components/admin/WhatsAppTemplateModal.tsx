@@ -83,6 +83,19 @@ export function WhatsAppTemplateModal({
   const detailCetakText =
     detailCetakList.length > 0 ? detailCetakList.join(', ') : 'Cetak Foto'
 
+  // Add-on (pesanan awal & tambahan di lapangan) — selalu dari data booking terbaru
+  const addonAwal = (booking.booking_addons || []).filter(a => !a.ditambah_oleh_admin)
+  const addonTambahan = (booking.booking_addons || []).filter(a => a.ditambah_oleh_admin)
+  const barisAddon = [
+    addonAwal.length > 0
+      ? `• Add-on: ${addonAwal.map(a => `${a.nama} x${a.jumlah}`).join(', ')}`
+      : null,
+    addonTambahan.length > 0
+      ? `• Add-on Tambahan di Studio: ${addonTambahan.map(a => `${a.nama} x${a.jumlah}`).join(', ')}`
+      : null,
+    hasCetak ? `• Rincian Cetak: ${detailCetakText}` : null,
+  ]
+
   // Generator template pesan WA
   const getMessageText = (tab: WhatsAppTemplateType): string => {
     switch (tab) {
@@ -95,6 +108,7 @@ export function WhatsAppTemplateModal({
           `📌 *Detail Reservasi:*`,
           `• Kode Booking: *${booking.kode}*`,
           `• Paket: ${booking.category_nama} - ${booking.package_nama}`,
+          ...barisAddon,
           `• Tanggal: *${tanggalFormatted}*`,
           `• Jam Sesi: *${booking.jam_mulai} WIB* (Durasi: ${booking.durasi_total} menit)`,
           booking.pilihan_background?.length
@@ -123,6 +137,7 @@ export function WhatsAppTemplateModal({
           `• Jam Sesi: *${booking.jam_mulai} WIB*`,
           `• Durasi: ${booking.durasi_total} menit`,
           `• Paket: ${booking.category_nama} - ${booking.package_nama}`,
+          ...barisAddon,
           booking.sisa_pelunasan > 0
             ? `• Sisa Pelunasan: *${formatRupiah(booking.sisa_pelunasan)}*`
             : `• Status Pembayaran: *Lunas*`,

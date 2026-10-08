@@ -1,6 +1,6 @@
 'use server'
 
-import { createAdminClient } from '@/lib/supabase/server'
+import { createAdminClient, createClient } from '@/lib/supabase/server'
 import { revalidatePath } from 'next/cache'
 import type { BookingFormData, BookingStatus, CetakStatus, Package, ClosedDateItem } from '@/types'
 import {
@@ -9,6 +9,31 @@ import {
   parseWaitingListInfo,
   isSlotWithinOperatingHours,
 } from '@/lib/utils'
+import {
+  getMenitPerUnit,
+  hitungMenitAddon,
+  hitungHargaAddon,
+  labelSatuanWaktu,
+  rencanakanTambahAddon,
+  rencanakanKurangiAddon,
+  terapkanRencanaKeBaris,
+  tentukanAksiCetak,
+  paketPunyaCetak,
+  type BarisBookingAddon,
+  type MasterAddon,
+  type RencanaPerubahan,
+} from '@/lib/addon-calc'
+
+// Helper: pastikan pemanggil adalah admin yang sudah login.
+// Mengembalikan client bersesi admin (RLS Supabase berlaku) + email dari sesi.
+async function requireAdmin() {
+  const supabase = await createClient()
+  const { data, error } = await supabase.auth.getUser()
+  if (error || !data?.user) {
+    return { error: 'Sesi admin tidak valid. Silakan login ulang.' as const }
+  }
+  return { supabase, email: data.user.email || 'admin' }
+}
 
 // Helper to check if a date is closed by studio admin
 async function checkIsDateClosed(supabase: Awaited<ReturnType<typeof createAdminClient>>, tanggal: string): Promise<ClosedDateItem | null> {
@@ -43,13 +68,62 @@ export async function submitBooking(formData: BookingFormData) {
     }
   }
 
+  // 0a. Ambil paket & kategori dari database (harga/durasi dari browser tidak dipercaya)
+  const { data: dbPackage } = await supabase
+    .from('packages')
+    .select('*')
+    .eq('id', formData.package?.id)
+    .eq('aktif', true)
+    .maybeSingle()
+
+  if (!dbPackage || dbPackage.category_id !== formData.category?.id) {
+    return { error: 'Paket tidak ditemukan atau sudah tidak aktif. Silakan muat ulang halaman.' }
+  }
+  const pkg = dbPackage as Package
+
+  const { data: dbCategory } = await supabase
+    .from('categories')
+    .select('id, nama')
+    .eq('id', pkg.category_id)
+    .maybeSingle()
+
+  // 0b. Ambil data master add-on: harga, jenis & menit_per_unit selalu dari database
+  const formAddons = (formData.addons || []).filter(a => Number(a.jumlah) > 0)
+  const addonIds = formAddons.map(a => a.addon.id)
+  const dbAddonsMap = new Map<string, MasterAddon>()
+  const allowedAddonIds = new Set<string>()
+  if (addonIds.length > 0) {
+    const [{ data: dbAddons }, { data: addonCats }] = await Promise.all([
+      supabase
+        .from('addons')
+        .select('id, harga, menit_per_unit, jenis, nama, satuan, maks')
+        .in('id', addonIds),
+      supabase
+        .from('addon_categories')
+        .select('addon_id')
+        .eq('category_id', pkg.category_id)
+        .in('addon_id', addonIds),
+    ])
+    ;(dbAddons || []).forEach(da => dbAddonsMap.set(da.id, da as MasterAddon))
+    ;(addonCats || []).forEach(ac => allowedAddonIds.add(ac.addon_id))
+  }
+
+  const addonRows: Array<MasterAddon & { jumlah: number }> = []
+  for (const a of formAddons) {
+    const da = dbAddonsMap.get(a.addon.id)
+    const qty = Number(a.jumlah)
+    if (!da || !allowedAddonIds.has(da.id)) {
+      return { error: 'Ada add-on yang tidak tersedia untuk kategori ini. Silakan muat ulang halaman.' }
+    }
+    if (!Number.isInteger(qty) || qty < 1 || qty > da.maks) {
+      return { error: `Jumlah add-on "${da.nama}" tidak valid (maksimal ${da.maks}).` }
+    }
+    addonRows.push({ ...da, jumlah: qty })
+  }
+
   // Check slot availability server-side
   const jamMulai = formData.jam_mulai
-  const durasiTotal =
-    formData.package.durasi_menit +
-    formData.addons
-      .filter(a => a.addon.jenis === 'waktu')
-      .reduce((sum, a) => sum + a.jumlah * 15, 0)
+  const durasiTotal = pkg.durasi_menit + hitungMenitAddon(addonRows)
 
   // 0b. Cek jam operasional studio & batas jam tutup
   const { data: opSettings } = await supabase
@@ -87,12 +161,10 @@ export async function submitBooking(formData: BookingFormData) {
 
   const buktiPath = formData.bukti_transfer || null
 
-  // Calculate total
-  const totalAddons = formData.addons.reduce(
-    (sum, a) => sum + a.addon.harga * a.jumlah,
-    0
-  )
-  const totalHarga = formData.package.harga + totalAddons
+  // Hitung total harga dari database (paket + add-on)
+  const totalHarga = pkg.harga + hitungHargaAddon(addonRows)
+
+  const hasCetak = paketPunyaCetak(pkg) || addonRows.some(a => a.jenis === 'cetak')
 
   // Insert booking
   const { data: booking, error: bookingError } = await supabase
@@ -105,18 +177,19 @@ export async function submitBooking(formData: BookingFormData) {
       tanggal: formData.tanggal,
       jam_mulai: jamMulai,
       durasi_total: durasiTotal,
-      category_id: formData.category.id,
-      category_nama: formData.category.nama,
-      package_id: formData.package.id,
-      package_nama: formData.package.nama,
-      package_harga: formData.package.harga,
-      package_snapshot: formData.package,
+      category_id: pkg.category_id,
+      category_nama: dbCategory?.nama || formData.category.nama,
+      package_id: pkg.id,
+      package_nama: pkg.nama,
+      package_harga: pkg.harga,
+      package_snapshot: pkg,
       total_harga: totalHarga,
       dp_dibayar: formData.dp_dibayar,
       catatan: formData.catatan || null,
       pilihan_background: formData.pilihan_background,
       bukti_transfer: buktiPath,
       status: 'pending',
+      status_cetak: hasCetak ? 'menunggu' : null,
     })
     .select()
     .single()
@@ -125,17 +198,19 @@ export async function submitBooking(formData: BookingFormData) {
     return { error: bookingError?.message || 'Gagal menyimpan booking.' }
   }
 
-  // Insert add-ons
-  if (formData.addons.length > 0) {
+  // Insert add-ons dengan snapshot menit_per_unit
+  if (addonRows.length > 0) {
     await supabase.from('booking_addons').insert(
-      formData.addons.map(a => ({
+      addonRows.map(da => ({
         booking_id: booking.id,
-        addon_id: a.addon.id,
-        jenis: a.addon.jenis,
-        nama: a.addon.nama,
-        satuan: a.addon.satuan,
-        harga: a.addon.harga,
-        jumlah: a.jumlah,
+        addon_id: da.id,
+        jenis: da.jenis,
+        nama: da.nama,
+        satuan: da.jenis === 'waktu' ? labelSatuanWaktu(da) : da.satuan,
+        harga: da.harga,
+        jumlah: da.jumlah,
+        menit_per_unit: da.jenis === 'waktu' ? getMenitPerUnit(da) : null,
+        ditambah_oleh_admin: false,
       }))
     )
   }
@@ -733,10 +808,8 @@ export async function updateBookingSchedule(
     const categoryNama = (pkgData.categories as { nama?: string })?.nama || existing.category_nama
 
     // Hitung total durasi baru (durasi paket baru + addon jenis waktu jika ada)
-    const addons = (existing.booking_addons || []) as { jenis: string; jumlah: number; total: number; harga: number }[]
-    const addonWaktuMenit = addons
-      .filter(a => a.jenis === 'waktu')
-      .reduce((sum, a) => sum + (a.jumlah * 15), 0)
+    const addons = (existing.booking_addons || []) as { jenis: string; jumlah: number; total: number; harga: number; menit_per_unit?: number | null }[]
+    const addonWaktuMenit = hitungMenitAddon(addons)
     const durasiTotal = (pkgData.durasi_menit || 30) + addonWaktuMenit
 
     // Hitung total harga baru (harga paket baru + sum total addon)
@@ -973,3 +1046,208 @@ export async function deleteWaitingList(id: string) {
   }
 }
 
+// ============================================================
+// ADMIN: ADD-ON DI LAPANGAN
+// Semua penulisan lewat fungsi Postgres `terapkan_addon_lapangan`
+// (satu transaksi, RLS admin berlaku). Rumus di src/lib/addon-calc.ts.
+// ============================================================
+
+export interface AddonLapanganItem {
+  addon_id: string
+  jumlah: number
+}
+
+const STATUS_BOLEH_LAPANGAN = ['pending', 'booking']
+
+function rupiahLog(n: number) {
+  return `Rp ${Math.abs(n).toLocaleString('id-ID')}`
+}
+
+async function terapkanRencanaLapangan(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  booking: {
+    id: string
+    updated_at: string | null
+    status_cetak: string | null
+    package_snapshot: Package | null
+    booking_addons?: BarisBookingAddon[]
+  },
+  rencana: RencanaPerubahan,
+  opts: { pilihanBackground: string[] | null; log: string; email: string }
+) {
+  const barisSetelah = terapkanRencanaKeBaris(booking.booking_addons || [], rencana)
+  const aksiCetak = tentukanAksiCetak({
+    statusCetak: booking.status_cetak,
+    paketPunyaCetak: paketPunyaCetak(booking.package_snapshot),
+    barisSetelah,
+    adaCetakBaru: rencana.adaCetak,
+  })
+
+  const { data, error } = await supabase.rpc('terapkan_addon_lapangan', {
+    p_booking_id: booking.id,
+    p_expected_updated_at: booking.updated_at,
+    p_update_rows: rencana.updateRows,
+    p_insert_rows: rencana.insertRows,
+    p_delta_harga: rencana.deltaHarga,
+    p_delta_menit: rencana.deltaMenit,
+    p_cetak_aksi: aksiCetak,
+    p_pilihan_background: opts.pilihanBackground,
+    p_log: opts.log,
+    p_oleh: opts.email,
+  })
+
+  if (error) {
+    if (/terapkan_addon_lapangan/i.test(error.message) && /(not find|does not exist|schema cache)/i.test(error.message)) {
+      return { error: 'Fungsi database belum tersedia. Jalankan migrasi 005_addon_lapangan_menit.sql di Supabase terlebih dahulu.' }
+    }
+    return { error: error.message }
+  }
+
+  revalidatePath('/admin/bookings')
+  return {
+    success: true as const,
+    hasil: data as { total_harga: number; durasi_total: number; sisa_pelunasan: number },
+  }
+}
+
+// ---- Admin: tambah add-on di lapangan ke booking yang sudah ada ----
+export async function addAddonsToBooking(
+  bookingId: string,
+  items: AddonLapanganItem[],
+  catatan?: string,
+  backgroundsDipilih?: string[],
+  izinkanLewatJamTutup: boolean = false
+): Promise<{ error?: string; perluKonfirmasiJamTutup?: boolean; success?: boolean }> {
+  try {
+    const auth = await requireAdmin()
+    if ('error' in auth) return { error: auth.error }
+    const { supabase, email } = auth
+
+    // 1. Booking + add-on yang sudah ada
+    const { data: booking, error: fetchError } = await supabase
+      .from('bookings')
+      .select('*, booking_addons(*)')
+      .eq('id', bookingId)
+      .single()
+
+    if (fetchError || !booking) return { error: 'Booking tidak ditemukan.' }
+
+    if (!STATUS_BOLEH_LAPANGAN.includes(booking.status)) {
+      return { error: `Add-on di lapangan hanya untuk booking berstatus Pending atau Booking. Status saat ini: ${booking.status}.` }
+    }
+
+    // 2. Harga, maks & menit_per_unit TERBARU dari tabel addons + add-on aktif untuk kategori
+    const addonIds = Array.from(new Set((items || []).map(it => it.addon_id).filter(Boolean)))
+    if (addonIds.length === 0) return { error: 'Pilih minimal satu add-on dengan jumlah lebih dari 0.' }
+
+    const [{ data: masters, error: masterError }, { data: addonCats }] = await Promise.all([
+      supabase.from('addons').select('id, jenis, nama, satuan, harga, maks, menit_per_unit').in('id', addonIds),
+      booking.category_id
+        ? supabase.from('addon_categories').select('addon_id').eq('category_id', booking.category_id)
+        : Promise.resolve({ data: null }),
+    ])
+    if (masterError) return { error: 'Gagal mengambil data add-on.' }
+
+    const allowed = addonCats ? new Set<string>(addonCats.map((r: { addon_id: string }) => r.addon_id)) : null
+
+    // 3. Susun rencana (validasi maks, penggabungan baris, hitung harga & durasi)
+    const existing = (booking.booking_addons || []) as BarisBookingAddon[]
+    const hasil = rencanakanTambahAddon(existing, (masters || []) as MasterAddon[], items, allowed)
+    if (!hasil.ok) return { error: hasil.error }
+    const rencana = hasil.rencana
+
+    // 4. Warna background tambahan (maksimal sebanyak unit add-on background yang ditambah)
+    const bgLama: string[] = Array.isArray(booking.pilihan_background) ? booking.pilihan_background : []
+    const bgBaru = Array.from(new Set((backgroundsDipilih || []).map(b => String(b).trim()).filter(Boolean)))
+      .filter(b => !bgLama.includes(b))
+    if (bgBaru.length > rencana.tambahanBackground) {
+      return { error: `Warna background tambahan maksimal ${rencana.tambahanBackground}.` }
+    }
+    const pilihanBackground = bgBaru.length > 0 ? [...bgLama, ...bgBaru] : null
+
+    // 5. Cek jam tutup (boleh lanjut hanya dengan konfirmasi admin)
+    const durasiBaru = (booking.durasi_total || 0) + rencana.deltaMenit
+    let lewatJamTutup = false
+    if (rencana.deltaMenit > 0) {
+      const { data: tutupRow } = await supabase.from('settings').select('value').eq('key', 'jam_tutup').maybeSingle()
+      const jamTutup = typeof tutupRow?.value === 'string' ? tutupRow.value : '20:00'
+      const jamMulai = String(booking.jam_mulai).slice(0, 5)
+      lewatJamTutup = !isSlotWithinOperatingHours(jamMulai, durasiBaru, '00:00', jamTutup)
+      if (lewatJamTutup && !izinkanLewatJamTutup) {
+        return {
+          error: `Durasi baru (${durasiBaru} menit) membuat sesi selesai melewati jam tutup ${jamTutup}. Centang konfirmasi untuk tetap melanjutkan.`,
+          perluKonfirmasiJamTutup: true,
+        }
+      }
+    }
+
+    // 6. Catatan log
+    const bagian = [`+${rupiahLog(rencana.deltaHarga)}`]
+    if (rencana.deltaMenit > 0) bagian.push(`+${rencana.deltaMenit} menit`)
+    let log = `Add-on di lapangan: ${rencana.rincian.join(', ')} (${bagian.join(', ')})`
+    if (bgBaru.length > 0) log += `. Warna tambahan: ${bgBaru.join(', ')}`
+    if (lewatJamTutup) log += '. Melewati jam tutup (disetujui admin)'
+    if (catatan?.trim()) log += `. Catatan: ${catatan.trim()}`
+
+    // 7. Simpan (satu transaksi)
+    const res = await terapkanRencanaLapangan(supabase, booking, rencana, {
+      pilihanBackground,
+      log,
+      email,
+    })
+    if ('error' in res) return { error: res.error }
+    return { success: true }
+  } catch (err: unknown) {
+    return { error: (err as Error)?.message || 'Terjadi kesalahan saat menambahkan add-on di lapangan.' }
+  }
+}
+
+// ---- Admin: kurangi / hapus add-on tambahan di lapangan ----
+// Hanya baris ditambah_oleh_admin = true. Add-on pesanan awal klien tidak bisa disentuh.
+export async function kurangiAddonLapangan(
+  bookingAddonId: string,
+  jumlahKurang: number
+): Promise<{ error?: string; success?: boolean }> {
+  try {
+    const auth = await requireAdmin()
+    if ('error' in auth) return { error: auth.error }
+    const { supabase, email } = auth
+
+    const { data: row, error: rowError } = await supabase
+      .from('booking_addons')
+      .select('*')
+      .eq('id', bookingAddonId)
+      .single()
+    if (rowError || !row) return { error: 'Data add-on tidak ditemukan.' }
+
+    const { data: booking, error: bookingError } = await supabase
+      .from('bookings')
+      .select('*, booking_addons(*)')
+      .eq('id', row.booking_id)
+      .single()
+    if (bookingError || !booking) return { error: 'Booking terkait tidak ditemukan.' }
+
+    if (!STATUS_BOLEH_LAPANGAN.includes(booking.status)) {
+      return { error: `Add-on tidak bisa diubah untuk booking berstatus ${booking.status}.` }
+    }
+
+    const hasil = rencanakanKurangiAddon(row as BarisBookingAddon, jumlahKurang)
+    if (!hasil.ok) return { error: hasil.error }
+    const rencana = hasil.rencana
+
+    const sisa = row.jumlah - jumlahKurang
+    const bagian = [`-${rupiahLog(rencana.deltaHarga)}`]
+    if (rencana.deltaMenit < 0) bagian.push(`${rencana.deltaMenit} menit`)
+    const log = `Koreksi add-on di lapangan: ${row.nama} -${jumlahKurang}${sisa > 0 ? ` (sisa ${sisa})` : ' (dihapus)'} (${bagian.join(', ')})`
+
+    const res = await terapkanRencanaLapangan(supabase, booking, rencana, {
+      pilihanBackground: null,
+      log,
+      email,
+    })
+    if ('error' in res) return { error: res.error }
+    return { success: true }
+  } catch (err: unknown) {
+    return { error: (err as Error)?.message || 'Gagal mengoreksi add-on di lapangan.' }
+  }
+}

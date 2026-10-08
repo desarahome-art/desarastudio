@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button'
 import { ModernDatePicker } from '@/components/booking/ModernDatePicker'
 import { getAvailableSlots, updateBookingSchedule } from '@/app/actions'
 import { formatRupiah } from '@/lib/utils'
+import { hitungMenitAddon } from '@/lib/addon-calc'
 import {
   X,
   Calendar,
@@ -57,9 +58,7 @@ export function RescheduleModal({
 
   // Hitung addon waktu & addon total harga yang sudah ada di booking
   const addonWaktuMenit = useMemo(() => {
-    return (booking.booking_addons || [])
-      .filter(a => a.jenis === 'waktu')
-      .reduce((sum, a) => sum + (a.jumlah * 15), 0)
+    return hitungMenitAddon(booking.booking_addons || [])
   }, [booking.booking_addons])
 
   const totalAddonsPrice = useMemo(() => {

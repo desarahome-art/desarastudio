@@ -69,6 +69,7 @@ export interface Addon {
   maks: number
   ukuran: string | null
   urutan: number
+  menit_per_unit?: number
   created_at: string
 }
 
@@ -115,6 +116,9 @@ export interface BookingAddon {
   harga: number
   jumlah: number
   total: number
+  menit_per_unit?: number | null
+  ditambah_oleh_admin?: boolean
+  ditambah_pada?: string | null
 }
 
 export interface BookingStatusLog {
