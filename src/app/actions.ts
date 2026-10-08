@@ -30,37 +30,6 @@ async function checkIsDateClosed(supabase: Awaited<ReturnType<typeof createAdmin
   }
 }
 
-// ---- Public: upload bukti transfer ----
-export async function uploadBuktiTransfer(formData: FormData): Promise<{ path?: string; error?: string }> {
-  try {
-    const file = formData.get('file') as File | null
-    if (!file) return { error: 'File tidak ditemukan' }
-
-    const supabase = await createAdminClient()
-    const ext = file.name.split('.').pop() || 'jpg'
-    const fileName = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
-
-    const arrayBuffer = await file.arrayBuffer()
-    const buffer = Buffer.from(arrayBuffer)
-
-    const { error: uploadError } = await supabase.storage
-      .from('bukti-transfer')
-      .upload(fileName, buffer, {
-        contentType: file.type || 'image/jpeg',
-        upsert: true,
-      })
-
-    if (uploadError) {
-      console.error('Error uploading bukti transfer:', uploadError)
-      return { error: uploadError.message }
-    }
-
-    return { path: fileName }
-  } catch (err: unknown) {
-    console.error('Failed to upload bukti transfer:', err)
-    return { error: (err as Error)?.message || 'Gagal mengunggah bukti transfer' }
-  }
-}
 
 // ---- Public: submit booking ----
 export async function submitBooking(formData: BookingFormData) {

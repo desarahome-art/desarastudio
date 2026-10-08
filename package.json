@@ -14,7 +14,6 @@
     "@fontsource/dm-sans": "^5.3.0",
     "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.117.2",
-    "@tanstack/react-query": "^5.104.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.4.0",
     "framer-motion": "^14.0.0",
@@ -22,10 +21,7 @@
     "next": "14.2.35",
     "react": "^18",
     "react-dom": "^18",
-    "react-hook-form": "^7.89.0",
-    "tailwind-merge": "^3.7.0",
-    "zod": "^4.6.5",
-    "zustand": "^5.0.15"
+    "tailwind-merge": "^3.7.0"
   },
   "devDependencies": {
     "@types/node": "^20",
