@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { BookingsClient } from '@/components/admin/BookingsClient'
-import type { BackgroundItem } from '@/types'
+import { normalizeTime } from '@/lib/utils'
+import type { BackgroundItem, ClosedDateItem } from '@/types'
 
 export const revalidate = 0
 
@@ -35,15 +36,23 @@ export default async function BookingsPage() {
     supabase
       .from('settings')
       .select('key, value')
-      .in('key', ['backgrounds', 'jam_tutup', 'jam_buka']),
+      .in('key', ['backgrounds', 'jam_tutup', 'jam_buka', 'closed_dates', 'nama_studio']),
   ])
 
   let availableBackgrounds: BackgroundItem[] = []
   let jamTutup = '20:00'
+  let closedDates: ClosedDateItem[] = []
+  let namaStudio: string | undefined
   if (settingsRows) {
     for (const s of settingsRows) {
       if (s.key === 'backgrounds' && Array.isArray(s.value)) {
         availableBackgrounds = s.value as BackgroundItem[]
+      }
+      if (s.key === 'nama_studio' && typeof s.value === 'string' && s.value.trim()) {
+        namaStudio = s.value.trim()
+      }
+      if (s.key === 'closed_dates' && Array.isArray(s.value)) {
+        closedDates = s.value as ClosedDateItem[]
       }
       if (s.key === 'jam_tutup' && typeof s.value === 'string') {
         jamTutup = s.value
@@ -57,13 +66,16 @@ export default async function BookingsPage() {
     <div>
       <h1 className="font-heading text-2xl font-bold mb-6">Daftar Booking</h1>
       <BookingsClient
-        initialBookings={bookings || []}
+        // Jam dari database berbentuk "10:00:00"; tampilkan "10:00"
+        initialBookings={(bookings || []).map(b => ({ ...b, jam_mulai: normalizeTime(b.jam_mulai) }))}
         packages={packages || []}
         categories={categories || []}
         addons={addons || []}
         addonCategories={addonCategories || []}
         availableBackgrounds={availableBackgrounds}
         jamTutup={jamTutup}
+        closedDates={closedDates}
+        namaStudio={namaStudio}
         adminEmail={user.user?.email || ''}
       />
     </div>

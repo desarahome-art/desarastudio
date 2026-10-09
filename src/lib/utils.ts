@@ -186,10 +186,12 @@ export function parseWaitingListInfo(catatan?: string | null): {
   catatanTambahan?: string
 } {
   if (!catatan) return {}
+  const bookingMatch = catatan.match(/\[Sudah Masuk Booking:\s*([^\]]+)\]/i)
+  // Buang penanda konversi supaya tidak ikut terbaca sebagai bagian catatan/kampus/dp
+  catatan = catatan.replace(/\s*\[Sudah Masuk Booking:[^\]]*\]/gi, '')
   const jamMatch = catatan.match(/(?:\[Jam:\s*|Perkiraan Jam:\s*)(\d{1,2}:\d{2})/i)
   const kampusMatch = catatan.match(/Kampus(?:\/Instansi)?:\s*([^|\]]+)/i)
   const dpMatch = catatan.match(/DP:\s*([^|\]]+)/i)
-  const bookingMatch = catatan.match(/\[Sudah Masuk Booking:\s*([^\]]+)\]/i)
   const catMatch = catatan.match(/Catatan:\s*([^|\]]+)/i)
 
   return {
@@ -201,3 +203,54 @@ export function parseWaitingListInfo(catatan?: string | null): {
   }
 }
 
+
+// ------------------------------------------------------------
+// Waktu Indonesia Barat (WIB, UTC+7) — studio ada di Pontianak.
+// JANGAN pakai new Date().toISOString() untuk "hari ini": itu jam UTC,
+// sehingga antara 00:00–06:59 WIB tanggalnya masih kemarin.
+// ------------------------------------------------------------
+const ZONA_STUDIO = 'Asia/Jakarta'
+
+function bagianWaktuWIB(d: Date) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: ZONA_STUDIO,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(d)
+  const get = (t: string) => parts.find(p => p.type === t)?.value || '00'
+  return {
+    tanggal: `${get('year')}-${get('month')}-${get('day')}`,
+    menit: Number(get('hour')) * 60 + Number(get('minute')),
+  }
+}
+
+/** Tanggal hari ini di WIB, format YYYY-MM-DD */
+export function hariIniWIB(now: Date = new Date()): string {
+  return bagianWaktuWIB(now).tanggal
+}
+
+/** Menit sejak tengah malam saat ini di WIB */
+export function menitSekarangWIB(now: Date = new Date()): number {
+  return bagianWaktuWIB(now).menit
+}
+
+/** Tanggal (YYYY-MM-DD) dengan penambahan hari, dihitung dari hari ini WIB */
+export function tambahHariWIB(jumlahHari: number, now: Date = new Date()): string {
+  const [y, m, d] = hariIniWIB(now).split('-').map(Number)
+  const dt = new Date(Date.UTC(y, m - 1, d + jumlahHari))
+  return dt.toISOString().slice(0, 10)
+}
+
+export function formatTanggalValid(t: unknown): t is string {
+  if (typeof t !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(t)) return false
+  const dt = new Date(`${t}T00:00:00Z`)
+  return !Number.isNaN(dt.getTime()) && dt.toISOString().slice(0, 10) === t
+}
+
+export function formatJamValid(j: unknown): j is string {
+  return typeof j === 'string' && /^([01]?\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/.test(j.trim())
+}

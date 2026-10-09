@@ -64,17 +64,15 @@ END $$;
 
 -- ------------------------------------------------------------
 -- 4. RLS booking_addons
---    * Pengunjung (form booking) hanya boleh insert baris pesanan biasa,
---      tidak boleh menyisipkan baris "tambahan admin".
+--    * Pengunjung tidak punya hak insert langsung (booking klien lewat Server Action).
 --    * Insert/update/delete baris tambahan admin hanya oleh admin login
 --      (policy "booking_addons_admin_all" = is_admin()).
 -- ------------------------------------------------------------
 DROP POLICY IF EXISTS "booking_addons_admin_manage" ON booking_addons; -- duplikat dari versi lama file ini
 
+-- Insert oleh pengunjung (anon) sengaja TIDAK dibuat: booking klien ditulis lewat Server Action
+-- (service role). Lihat migrasi 006.
 DROP POLICY IF EXISTS "booking_addons_insert_anon" ON booking_addons;
-CREATE POLICY "booking_addons_insert_anon" ON booking_addons
-  FOR INSERT
-  WITH CHECK (ditambah_oleh_admin = FALSE AND ditambah_pada IS NULL);
 
 DO $$
 BEGIN

@@ -8,6 +8,12 @@ import {
   generateTimeSlots,
   parseWaitingListInfo,
   isSlotWithinOperatingHours,
+  normalizeTime,
+  timeToMinutes,
+  hariIniWIB,
+  menitSekarangWIB,
+  formatTanggalValid,
+  formatJamValid,
 } from '@/lib/utils'
 import {
   getMenitPerUnit,
@@ -24,19 +30,35 @@ import {
   type RencanaPerubahan,
 } from '@/lib/addon-calc'
 
+type AdminClient = Awaited<ReturnType<typeof createAdminClient>>
+
+const PESAN_SLOT_PENUH = 'Slot jam sudah dipesan. Pilih jam lain.'
+// Kode error Postgres untuk pelanggaran unique index (dua orang mengambil jam yang sama bersamaan)
+const KODE_UNIK_DILANGGAR = '23505'
+
 // Helper: pastikan pemanggil adalah admin yang sudah login.
 // Mengembalikan client bersesi admin (RLS Supabase berlaku) + email dari sesi.
+// Opsional: isi ADMIN_EMAILS di .env.local ("a@x.com,b@y.com") agar HANYA email itu
+// yang dianggap admin (berguna jika pendaftaran akun Supabase masih terbuka).
 async function requireAdmin() {
   const supabase = await createClient()
   const { data, error } = await supabase.auth.getUser()
   if (error || !data?.user) {
     return { error: 'Sesi admin tidak valid. Silakan login ulang.' as const }
   }
-  return { supabase, email: data.user.email || 'admin' }
+  const email = data.user.email || 'admin'
+  const daftarIzin = (process.env.ADMIN_EMAILS || '')
+    .split(',')
+    .map(e => e.trim().toLowerCase())
+    .filter(Boolean)
+  if (daftarIzin.length > 0 && !daftarIzin.includes(email.toLowerCase())) {
+    return { error: 'Akun ini tidak punya akses admin.' as const }
+  }
+  return { supabase, email }
 }
 
 // Helper to check if a date is closed by studio admin
-async function checkIsDateClosed(supabase: Awaited<ReturnType<typeof createAdminClient>>, tanggal: string): Promise<ClosedDateItem | null> {
+async function checkIsDateClosed(supabase: AdminClient, tanggal: string): Promise<ClosedDateItem | null> {
   try {
     const { data: settingRow } = await supabase
       .from('settings')
@@ -55,17 +77,58 @@ async function checkIsDateClosed(supabase: Awaited<ReturnType<typeof createAdmin
   }
 }
 
+function pesanTutup(tanggal: string, info: ClosedDateItem) {
+  return `Studio tutup pada tanggal ${tanggal}${info.keterangan ? ` (${info.keterangan})` : ''}. Silakan pilih tanggal lain.`
+}
+
+// Pengaturan operasional selalu dibaca dari database (bukan dari nilai yang dikirim browser)
+async function bacaPengaturanOperasional(supabase: AdminClient) {
+  const hasil = { jamBuka: '08:00', jamTutup: '20:00', slotInterval: 30, dpMinimal: 100000 }
+  try {
+    const { data } = await supabase
+      .from('settings')
+      .select('key, value')
+      .in('key', ['jam_buka', 'jam_tutup', 'slot_interval', 'dp_minimal'])
+    for (const s of data || []) {
+      if (s.key === 'jam_buka' && formatJamValid(s.value)) hasil.jamBuka = normalizeTime(s.value)
+      if (s.key === 'jam_tutup' && formatJamValid(s.value)) hasil.jamTutup = normalizeTime(s.value)
+      if (s.key === 'slot_interval' && Number(s.value) > 0) hasil.slotInterval = Number(s.value)
+      if (s.key === 'dp_minimal' && Number(s.value) >= 0) hasil.dpMinimal = Number(s.value)
+    }
+  } catch {
+    // pakai nilai bawaan
+  }
+  return hasil
+}
+
+// Jam yang sudah lewat (hari ini) tidak boleh dipesan klien.
+function sudahLewat(tanggal: string, jamMulai: string): boolean {
+  const hariIni = hariIniWIB()
+  if (tanggal < hariIni) return true
+  if (tanggal === hariIni) return timeToMinutes(normalizeTime(jamMulai)) <= menitSekarangWIB()
+  return false
+}
+
 
 // ---- Public: submit booking ----
 export async function submitBooking(formData: BookingFormData) {
   const supabase = await createAdminClient()
 
+  // Validasi dasar input dari browser
+  const nama = String(formData?.nama || '').trim()
+  const waKlien = String(formData?.wa_klien || '').trim()
+  if (!nama) return { error: 'Nama wajib diisi.' }
+  if (waKlien.replace(/[^0-9]/g, '').length < 8) return { error: 'Nomor WhatsApp tidak valid.' }
+  if (!formatTanggalValid(formData?.tanggal)) return { error: 'Tanggal tidak valid.' }
+  if (!formatJamValid(formData?.jam_mulai)) return { error: 'Jam sesi tidak valid.' }
+  if (sudahLewat(formData.tanggal, formData.jam_mulai)) {
+    return { error: 'Tanggal/jam yang dipilih sudah lewat. Silakan pilih jadwal lain.' }
+  }
+
   // 0. Cek apakah studio tutup pada tanggal tersebut
   const closedInfo = await checkIsDateClosed(supabase, formData.tanggal)
   if (closedInfo) {
-    return {
-      error: `Studio tutup pada tanggal ${formData.tanggal}${closedInfo.keterangan ? ` (${closedInfo.keterangan})` : ''}. Silakan pilih tanggal lain.`,
-    }
+    return { error: pesanTutup(formData.tanggal, closedInfo) }
   }
 
   // 0a. Ambil paket & kategori dari database (harga/durasi dari browser tidak dipercaya)
@@ -109,12 +172,17 @@ export async function submitBooking(formData: BookingFormData) {
   }
 
   const addonRows: Array<MasterAddon & { jumlah: number }> = []
+  const sudahDipakai = new Set<string>()
   for (const a of formAddons) {
     const da = dbAddonsMap.get(a.addon.id)
     const qty = Number(a.jumlah)
     if (!da || !allowedAddonIds.has(da.id)) {
       return { error: 'Ada add-on yang tidak tersedia untuk kategori ini. Silakan muat ulang halaman.' }
     }
+    if (sudahDipakai.has(da.id)) {
+      return { error: `Add-on "${da.nama}" terkirim dua kali. Silakan muat ulang halaman.` }
+    }
+    sudahDipakai.add(da.id)
     if (!Number.isInteger(qty) || qty < 1 || qty > da.maks) {
       return { error: `Jumlah add-on "${da.nama}" tidak valid (maksimal ${da.maks}).` }
     }
@@ -122,28 +190,29 @@ export async function submitBooking(formData: BookingFormData) {
   }
 
   // Check slot availability server-side
-  const jamMulai = formData.jam_mulai
+  const jamMulai = normalizeTime(formData.jam_mulai)
   const durasiTotal = pkg.durasi_menit + hitungMenitAddon(addonRows)
 
-  // 0b. Cek jam operasional studio & batas jam tutup
-  const { data: opSettings } = await supabase
-    .from('settings')
-    .select('key, value')
-    .in('key', ['jam_buka', 'jam_tutup'])
-
-  let jamBuka = '08:00'
-  let jamTutup = '20:00'
-  if (opSettings) {
-    for (const s of opSettings) {
-      if (s.key === 'jam_buka' && typeof s.value === 'string') jamBuka = s.value
-      if (s.key === 'jam_tutup' && typeof s.value === 'string') jamTutup = s.value
-    }
-  }
+  // 0c. Cek jam operasional studio & batas jam tutup (dari database)
+  const { jamBuka, jamTutup, dpMinimal } = await bacaPengaturanOperasional(supabase)
 
   if (!isSlotWithinOperatingHours(jamMulai, durasiTotal, jamBuka, jamTutup)) {
     return {
       error: `Waktu sesi (${jamMulai} WIB dengan durasi ${durasiTotal} menit) berada di luar jam operasional atau melewati jam tutup studio (${jamBuka} - ${jamTutup}).`,
     }
+  }
+
+  // Hitung total harga dari database (paket + add-on)
+  const totalHarga = pkg.harga + hitungHargaAddon(addonRows)
+
+  // 0d. Validasi DP di server (sebelumnya hanya dicek di browser)
+  const dpDibayar = Number(formData.dp_dibayar)
+  const dpWajib = Math.min(dpMinimal, totalHarga)
+  if (!Number.isFinite(dpDibayar) || !Number.isInteger(dpDibayar) || dpDibayar < dpWajib) {
+    return { error: `DP minimal Rp ${dpWajib.toLocaleString('id-ID')}.` }
+  }
+  if (dpDibayar > totalHarga) {
+    return { error: 'Nominal DP tidak boleh lebih besar dari total harga.' }
   }
 
   const { data: existingBookings } = await supabase
@@ -156,13 +225,10 @@ export async function submitBooking(formData: BookingFormData) {
     existingBookings &&
     isSlotBlocked(jamMulai, durasiTotal, existingBookings)
   ) {
-    return { error: 'Slot jam sudah dipesan. Pilih jam lain.' }
+    return { error: PESAN_SLOT_PENUH }
   }
 
   const buktiPath = formData.bukti_transfer || null
-
-  // Hitung total harga dari database (paket + add-on)
-  const totalHarga = pkg.harga + hitungHargaAddon(addonRows)
 
   const hasCetak = paketPunyaCetak(pkg) || addonRows.some(a => a.jenis === 'cetak')
 
@@ -171,8 +237,8 @@ export async function submitBooking(formData: BookingFormData) {
     .from('bookings')
     .insert({
       kode: '', // trigger will generate
-      nama_klien: formData.nama,
-      wa_klien: formData.wa_klien,
+      nama_klien: nama,
+      wa_klien: waKlien,
       kampus: formData.kampus || null,
       tanggal: formData.tanggal,
       jam_mulai: jamMulai,
@@ -184,7 +250,7 @@ export async function submitBooking(formData: BookingFormData) {
       package_harga: pkg.harga,
       package_snapshot: pkg,
       total_harga: totalHarga,
-      dp_dibayar: formData.dp_dibayar,
+      dp_dibayar: dpDibayar,
       catatan: formData.catatan || null,
       pilihan_background: formData.pilihan_background,
       bukti_transfer: buktiPath,
@@ -195,12 +261,14 @@ export async function submitBooking(formData: BookingFormData) {
     .single()
 
   if (bookingError || !booking) {
+    // Dua klien menekan kirim bersamaan: database menolak yang kedua (unique index)
+    if (bookingError?.code === KODE_UNIK_DILANGGAR) return { error: PESAN_SLOT_PENUH }
     return { error: bookingError?.message || 'Gagal menyimpan booking.' }
   }
 
   // Insert add-ons dengan snapshot menit_per_unit
   if (addonRows.length > 0) {
-    await supabase.from('booking_addons').insert(
+    const { error: addonError } = await supabase.from('booking_addons').insert(
       addonRows.map(da => ({
         booking_id: booking.id,
         addon_id: da.id,
@@ -213,18 +281,24 @@ export async function submitBooking(formData: BookingFormData) {
         ditambah_oleh_admin: false,
       }))
     )
+    if (addonError) {
+      // Jangan biarkan booking tersimpan tanpa add-on-nya (total harga sudah termasuk add-on)
+      await supabase.from('bookings').delete().eq('id', booking.id)
+      return { error: `Gagal menyimpan add-on: ${addonError.message}. Silakan coba lagi.` }
+    }
   }
 
   // Log status
-  await supabase.from('booking_status_log').insert({
+  const { error: logError } = await supabase.from('booking_status_log').insert({
     booking_id: booking.id,
     status_dari: null,
     status_ke: 'pending',
     oleh: 'system',
     catatan: 'Booking dibuat oleh klien',
   })
+  if (logError) console.error('Gagal menulis log booking:', logError.message)
 
-  return { success: true, booking }
+  return { success: true, booking: { ...booking, jam_mulai: normalizeTime(booking.jam_mulai) } }
 }
 
 // ---- Public: submit waiting list ----
@@ -244,8 +318,17 @@ export async function submitWaitingList(data: {
 }) {
   const supabase = await createAdminClient()
 
-  if (!data.jam_ingin) {
+  if (!data.jam_ingin || !formatJamValid(data.jam_ingin)) {
     return { error: 'Jam sesi waiting list wajib dipilih.' }
+  }
+  if (!String(data.nama || '').trim() || String(data.wa || '').replace(/[^0-9]/g, '').length < 8) {
+    return { error: 'Nama dan nomor WhatsApp wajib diisi dengan benar.' }
+  }
+  if (data.tanggal_ingin && !formatTanggalValid(data.tanggal_ingin)) {
+    return { error: 'Tanggal tidak valid.' }
+  }
+  if (data.tanggal_ingin && sudahLewat(data.tanggal_ingin, data.jam_ingin)) {
+    return { error: 'Tanggal/jam yang dipilih sudah lewat. Silakan pilih jadwal lain.' }
   }
 
   // Jika menggunakan acara wisuda (mode baru)
@@ -270,9 +353,7 @@ export async function submitWaitingList(data: {
     // Mode lama: cek per tanggal
     const closedInfo = await checkIsDateClosed(supabase, data.tanggal_ingin)
     if (closedInfo) {
-      return {
-        error: `Studio tutup pada tanggal ${data.tanggal_ingin}${closedInfo.keterangan ? ` (${closedInfo.keterangan})` : ''}. Silakan pilih tanggal lain.`,
-      }
+      return { error: pesanTutup(data.tanggal_ingin, closedInfo) }
     }
 
     const { data: existingWaiting } = await supabase
@@ -312,7 +393,8 @@ export async function submitWaitingList(data: {
     return { error: 'Pilih acara wisuda atau tanggal sesi foto.' }
   }
 
-  const dpAmount = data.dp_minimal || 100000
+  const { dpMinimal: dpPengaturan } = await bacaPengaturanOperasional(supabase)
+  const dpAmount = dpPengaturan
 
   // Format catatan lengkap
   const detailList: string[] = [
@@ -472,6 +554,11 @@ export async function createWisudaEvent(data: {
   keterangan?: string
   aktif?: boolean
 }) {
+  const auth = await requireAdmin()
+  if ('error' in auth) return { error: auth.error }
+  if (!String(data?.nama || '').trim() || !String(data?.kampus || '').trim()) {
+    return { error: 'Nama acara dan kampus wajib diisi.' }
+  }
   const supabase = await createAdminClient()
   const { error } = await supabase.from('wisuda_events').insert({
     nama: data.nama.trim(),
@@ -492,6 +579,8 @@ export async function updateWisudaEvent(id: string, data: {
   keterangan?: string | null
   aktif?: boolean
 }) {
+  const auth = await requireAdmin()
+  if ('error' in auth) return { error: auth.error }
   const supabase = await createAdminClient()
   const updates: Record<string, unknown> = {}
   if (data.nama !== undefined) updates.nama = data.nama.trim()
@@ -508,6 +597,8 @@ export async function updateWisudaEvent(id: string, data: {
 
 // ---- Admin: delete wisuda event ----
 export async function deleteWisudaEvent(id: string) {
+  const auth = await requireAdmin()
+  if ('error' in auth) return { error: auth.error }
   const supabase = await createAdminClient()
   const { error } = await supabase.from('wisuda_events').delete().eq('id', id)
   if (error) return { error: error.message }
@@ -520,8 +611,12 @@ export async function deleteWisudaEvent(id: string) {
 export async function convertWaitingListToBooking(
   waitingListId: string,
   tanggalFoto: string,
-  adminEmail?: string
+  _adminEmail?: string
 ) {
+  void _adminEmail // email diambil dari sesi login, bukan dari browser
+  const auth = await requireAdmin()
+  if ('error' in auth) return { error: auth.error }
+  const adminEmail = auth.email
   const supabase = await createAdminClient()
 
   // 1. Ambil data waiting list
@@ -535,7 +630,7 @@ export async function convertWaitingListToBooking(
     return { error: 'Data waiting list tidak ditemukan.' }
   }
 
-  if (!tanggalFoto) {
+  if (!tanggalFoto || !formatTanggalValid(tanggalFoto)) {
     return { error: 'Tanggal foto wajib dipilih oleh admin.' }
   }
 
@@ -549,9 +644,7 @@ export async function convertWaitingListToBooking(
   // Cek apakah studio tutup pada tanggal tersebut
   const closedInfo = await checkIsDateClosed(supabase, tanggalFoto)
   if (closedInfo) {
-    return {
-      error: `Studio tutup pada tanggal ${tanggalFoto}${closedInfo.keterangan ? ` (${closedInfo.keterangan})` : ''}. Pilih tanggal lain.`,
-    }
+    return { error: pesanTutup(tanggalFoto, closedInfo) }
   }
 
   // 2. Ambil paket untuk kategori ini — prioritaskan package_nama dari waiting list jika ada
@@ -562,40 +655,44 @@ export async function convertWaitingListToBooking(
     .eq('aktif', true)
     .order('urutan', { ascending: true })
 
-  // Coba cocokkan package_nama yang dipilih client di waiting list
-  let selectedPkg: Package | undefined
-  if (wl.package_nama && packages && packages.length > 0) {
-    selectedPkg = packages.find(
-      (p: Package) => p.nama.toLowerCase() === wl.package_nama.toLowerCase()
-    )
-  }
-  // Fallback ke paket pertama jika tidak ditemukan
-  if (!selectedPkg) {
-    selectedPkg = packages && packages.length > 0
-      ? packages[0]
-      : {
-          id: '00000000-0000-0000-0000-000000000000',
-          category_id: wl.category_id || '',
-          nama: 'Paket Standard (Waiting List)',
-          harga: 100000,
-          durasi_menit: 30,
-          jumlah_pilihan_background: 1,
-          maks_orang: 2,
-          cetak_ukuran: null,
-          cetak_jumlah: null,
-          jumlah_foto_edit: null,
-          bonus: null,
-          urutan: 1,
-          aktif: true,
-          created_at: new Date().toISOString(),
-        }
+  if (!packages || packages.length === 0) {
+    return {
+      error: `Kategori "${wl.category_nama || '-'}" belum punya paket aktif. Aktifkan/tambahkan paket dulu di menu Paket, lalu coba lagi.`,
+    }
   }
 
+  // Coba cocokkan package_nama yang dipilih client di waiting list; kalau tidak ada pakai paket pertama
+  let selectedPkg: Package | undefined
+  if (wl.package_nama) {
+    selectedPkg = (packages as Package[]).find(
+      p => p.nama.toLowerCase() === String(wl.package_nama).toLowerCase()
+    )
+  }
+  if (!selectedPkg) selectedPkg = packages[0] as Package
+
+  const { jamBuka, jamTutup, dpMinimal } = await bacaPengaturanOperasional(supabase)
+
   const tanggal = tanggalFoto
-  const jamMulai = parsedInfo.jam || '09:00'
-  const durasiTotal = selectedPkg!.durasi_menit || 30
-  const dpDibayar = 100000
-  const totalHarga = selectedPkg!.harga || 100000
+  const jamDefault = timeToMinutes(jamBuka) > timeToMinutes('09:00') ? jamBuka : '09:00'
+  const jamMulai = normalizeTime(parsedInfo.jam) || jamDefault
+  const durasiTotal = selectedPkg.durasi_menit || 30
+  const totalHarga = selectedPkg.harga || 0
+  const dpDibayar = Math.min(dpMinimal, totalHarga) // mengikuti Pengaturan (maksimal sebesar total harga)
+
+  // Cek jam operasional & bentrok dengan booking aktif lain
+  if (!isSlotWithinOperatingHours(jamMulai, durasiTotal, jamBuka, jamTutup)) {
+    return {
+      error: `Jam ${jamMulai} WIB (durasi ${durasiTotal} menit) berada di luar jam operasional studio (${jamBuka} - ${jamTutup}).`,
+    }
+  }
+  const { data: existingBookings } = await supabase
+    .from('bookings')
+    .select('jam_mulai, durasi_total')
+    .eq('tanggal', tanggal)
+    .in('status', ['pending', 'booking'])
+  if (existingBookings && isSlotBlocked(jamMulai, durasiTotal, existingBookings)) {
+    return { error: `Jam ${jamMulai} WIB pada ${tanggal} sudah dipakai booking lain. Pilih tanggal lain.` }
+  }
 
   // 3. Masukkan ke tabel bookings dengan status 'pending' (Menunggu)
   const { data: newBooking, error: insertError } = await supabase
@@ -610,36 +707,41 @@ export async function convertWaitingListToBooking(
       durasi_total: durasiTotal,
       category_id: wl.category_id,
       category_nama: wl.category_nama,
-      package_id: selectedPkg!.id,
-      package_nama: selectedPkg!.nama,
-      package_harga: selectedPkg!.harga,
-      package_snapshot: selectedPkg!,
+      package_id: selectedPkg.id,
+      package_nama: selectedPkg.nama,
+      package_harga: selectedPkg.harga,
+      package_snapshot: selectedPkg,
       total_harga: totalHarga,
       dp_dibayar: dpDibayar,
       catatan: `[Dikonversi dari Waiting List] ${wl.catatan || ''}`.trim(),
       pilihan_background: [],
       bukti_transfer: null,
       status: 'pending',
+      status_cetak: paketPunyaCetak(selectedPkg) ? 'menunggu' : null,
     })
     .select()
     .single()
 
   if (insertError || !newBooking) {
-    return { error: insertError?.message || 'Gagal memasukkan data ke booking: ' + (insertError?.message || '') }
+    if (insertError?.code === KODE_UNIK_DILANGGAR) {
+      return { error: `Jam ${jamMulai} WIB pada ${tanggal} baru saja dipakai booking lain. Pilih tanggal lain.` }
+    }
+    return { error: insertError?.message || 'Gagal memasukkan data ke booking.' }
   }
 
   // 4. Log status ke booking_status_log
-  await supabase.from('booking_status_log').insert({
+  const { error: logError } = await supabase.from('booking_status_log').insert({
     booking_id: newBooking.id,
     status_dari: null,
     status_ke: 'pending',
-    oleh: adminEmail || 'admin',
+    oleh: adminEmail,
     catatan: 'Booking dibuat otomatis dari data Waiting List oleh admin',
   })
+  if (logError) console.error('Gagal menulis log konversi waiting list:', logError.message)
 
   // 5. Update catatan di waiting_list agar tertandai sudah dikonversi
   const updatedWlCatatan = `${wl.catatan || ''} [Sudah Masuk Booking: ${newBooking.kode}]`.trim()
-  await supabase
+  const { error: wlUpdateError } = await supabase
     .from('waiting_list')
     .update({
       sudah_dihubungi: true,
@@ -651,19 +753,34 @@ export async function convertWaitingListToBooking(
   revalidatePath('/admin/bookings')
   revalidatePath('/')
 
+  if (wlUpdateError) {
+    return {
+      error: `Booking ${newBooking.kode} sudah dibuat, tetapi penanda di Waiting List gagal disimpan (${wlUpdateError.message}). Jangan konversi ulang; tandai manual atau hapus entri ini.`,
+    }
+  }
+
   return { success: true, bookingKode: newBooking.kode }
 }
 
 
 // ---- Public: get available slots ----
+// Jam buka/tutup/interval SELALU dibaca dari database (parameter jamBuka/jamTutup/intervalMenit
+// dipertahankan hanya agar pemanggil lama tetap jalan, nilainya diabaikan).
+// opsi.admin = true (hanya berlaku jika admin login): jam yang sudah lewat hari ini tetap ditampilkan.
+// opsi.kecualiBookingId: abaikan booking ini (dipakai saat reschedule agar jam sendiri tidak dianggap penuh).
 export async function getAvailableSlots(
   tanggal: string,
   durasiMenit: number = 30,
-  jamBuka: string = '08:00',
-  jamTutup: string = '20:00',
-  intervalMenit: number = 30
+  _jamBuka?: string,
+  _jamTutup?: string,
+  _intervalMenit?: number,
+  opsi?: { kecualiBookingId?: string; admin?: boolean }
 ): Promise<string[]> {
+  void _jamBuka
+  void _jamTutup
+  void _intervalMenit
   try {
+    if (!formatTanggalValid(tanggal)) return []
     const supabase = await createAdminClient()
 
     // Cek apakah tanggal studio ditutup/libur
@@ -672,33 +789,42 @@ export async function getAvailableSlots(
       return []
     }
 
-    const { data: blocked, error } = await supabase
+    let sebagaiAdmin = false
+    if (opsi?.admin) {
+      const auth = await requireAdmin()
+      sebagaiAdmin = !('error' in auth)
+    }
+
+    let query = supabase
       .from('bookings')
       .select('jam_mulai, durasi_total')
       .eq('tanggal', tanggal)
       .in('status', ['pending', 'booking'])
+    if (opsi?.kecualiBookingId) query = query.neq('id', opsi.kecualiBookingId)
+    const { data: blocked, error } = await query
 
     if (error) {
       console.error('Error fetching bookings for slots:', error)
+      return []
     }
 
-    const b = jamBuka || '08:00'
-    const t = jamTutup || '20:00'
-    const intv = Number(intervalMenit) || 30
+    const { jamBuka: b, jamTutup: t, slotInterval: intv } = await bacaPengaturanOperasional(supabase)
     const durasi = Number(durasiMenit) || 30
 
-    const slots: string[] = []
-    const [bH, bM] = b.split(':').map(Number)
-    const [tH, tM] = t.split(':').map(Number)
-    const start = (Number.isFinite(bH) ? bH : 8) * 60 + (Number.isFinite(bM) ? bM : 0)
-    const end = (Number.isFinite(tH) ? tH : 20) * 60 + (Number.isFinite(tM) ? tM : 0)
+    const start = timeToMinutes(b)
+    const end = timeToMinutes(t)
+    const hariIni = hariIniWIB()
+    if (!sebagaiAdmin && tanggal < hariIni) return []
+    const batasLewat = !sebagaiAdmin && tanggal === hariIni ? menitSekarangWIB() : -1
 
     const normalizedBlocked = (blocked || []).map(item => ({
       jam_mulai: item.jam_mulai ? String(item.jam_mulai).slice(0, 5) : '00:00',
       durasi_total: Number(item.durasi_total) || 0,
     }))
 
+    const slots: string[] = []
     for (let cur = start; cur + durasi <= end; cur += intv) {
+      if (cur <= batasLewat) continue // jam yang sudah lewat tidak ditawarkan
       const h = Math.floor(cur / 60).toString().padStart(2, '0')
       const m = (cur % 60).toString().padStart(2, '0')
       const slot = `${h}:${m}`
@@ -708,15 +834,8 @@ export async function getAvailableSlots(
     }
     return slots
   } catch (err) {
-    console.error('Failed getAvailableSlots, using default fallback:', err)
-    const fallbackSlots: string[] = []
-    const durasi = Number(durasiMenit) || 30
-    for (let cur = 8 * 60; cur + durasi <= 20 * 60; cur += 30) {
-      const h = Math.floor(cur / 60).toString().padStart(2, '0')
-      const m = (cur % 60).toString().padStart(2, '0')
-      fallbackSlots.push(`${h}:${m}`)
-    }
-    return fallbackSlots
+    console.error('Failed getAvailableSlots:', err)
+    return []
   }
 }
 
@@ -725,8 +844,11 @@ export async function updateBookingStatus(
   bookingId: string,
   statusBaru: BookingStatus,
   catatan?: string,
-  adminEmail?: string
+  _adminEmail?: string
 ) {
+  void _adminEmail // email diambil dari sesi login
+  const auth = await requireAdmin()
+  if ('error' in auth) return { error: auth.error }
   const supabase = await createAdminClient()
 
   const { data: existing, error: fetchError } = await supabase
@@ -745,24 +867,31 @@ export async function updateBookingStatus(
     dibatalkan: [],
   }
 
-  if (!allowed[current].includes(statusBaru)) {
+  if (!allowed[current]?.includes(statusBaru)) {
     return { error: `Tidak bisa mengubah status dari ${current} ke ${statusBaru}.` }
   }
 
-  const { error } = await supabase
+  // .eq('status', current): kalau admin lain sudah mengubahnya, update ini tidak menimpa
+  const { data: updated, error } = await supabase
     .from('bookings')
     .update({ status: statusBaru })
     .eq('id', bookingId)
+    .eq('status', current)
+    .select('id')
 
   if (error) return { error: error.message }
+  if (!updated || updated.length === 0) {
+    return { error: 'Status booking sudah diubah pihak lain. Muat ulang halaman.' }
+  }
 
-  await supabase.from('booking_status_log').insert({
+  const { error: logError } = await supabase.from('booking_status_log').insert({
     booking_id: bookingId,
     status_dari: current,
     status_ke: statusBaru,
     catatan: catatan || null,
-    oleh: adminEmail || 'admin',
+    oleh: auth.email,
   })
+  if (logError) console.error('Gagal menulis log status:', logError.message)
 
   revalidatePath('/admin/bookings')
   return { success: true }
@@ -773,11 +902,18 @@ export async function updateBookingSchedule(
   bookingId: string,
   tanggal: string,
   jamMulai: string,
-  adminEmail?: string,
+  _adminEmail?: string,
   keterangan?: string,
   newPackageId?: string
 ) {
+  void _adminEmail // email diambil dari sesi login
+  const auth = await requireAdmin()
+  if ('error' in auth) return { error: auth.error }
   const supabase = await createAdminClient()
+
+  if (!formatTanggalValid(tanggal)) return { error: 'Tanggal tidak valid.' }
+  if (!formatJamValid(jamMulai)) return { error: 'Jam tidak valid.' }
+  const jamBaru = normalizeTime(jamMulai)
 
   const { data: existing, error: fetchError } = await supabase
     .from('bookings')
@@ -787,13 +923,20 @@ export async function updateBookingSchedule(
 
   if (fetchError || !existing) return { error: 'Booking tidak ditemukan.' }
 
+  // Booking yang sudah selesai / dibatalkan tidak boleh dijadwal ulang
+  if (!['pending', 'booking'].includes(existing.status)) {
+    return { error: 'Jadwal hanya bisa diubah pada booking berstatus Menunggu atau Dikonfirmasi.' }
+  }
+
   const ketTrimmed = keterangan?.trim()
+  const jamLama = normalizeTime(existing.jam_mulai)
   const updates: Record<string, unknown> = {
     tanggal,
-    jam_mulai: jamMulai,
+    jam_mulai: jamBaru,
   }
 
   let packageChangeNote = ''
+  let paketBerubah = false
   if (newPackageId && newPackageId !== existing.package_id) {
     const { data: pkgData, error: pkgError } = await supabase
       .from('packages')
@@ -805,6 +948,7 @@ export async function updateBookingSchedule(
       return { error: 'Paket foto baru tidak ditemukan.' }
     }
 
+    paketBerubah = true
     const categoryNama = (pkgData.categories as { nama?: string })?.nama || existing.category_nama
 
     // Hitung total durasi baru (durasi paket baru + addon jenis waktu jika ada)
@@ -829,13 +973,34 @@ export async function updateBookingSchedule(
     updates.durasi_total = durasiTotal
     updates.total_harga = totalHarga
 
+    // Status cetak ikut menyesuaikan paket baru
+    const adaCetakAddon = addons.some(a => a.jenis === 'cetak')
+    const butuhCetak = paketPunyaCetak(pkgData as Package) || adaCetakAddon
+    if (butuhCetak && !existing.status_cetak) updates.status_cetak = 'menunggu'
+    if (!butuhCetak && existing.status_cetak === 'menunggu') updates.status_cetak = null
+
     packageChangeNote = `Paket diubah dari "${existing.package_nama}" ke "${pkgData.nama}" (${pkgData.harga ? 'Rp ' + Number(pkgData.harga).toLocaleString('id-ID') : 'Rp 0'})`
   }
 
   // Bangun catatan riwayat
   const changes: string[] = []
-  if (existing.tanggal !== tanggal || existing.jam_mulai !== jamMulai) {
+  const jadwalBerubah = existing.tanggal !== tanggal || jamLama !== jamBaru
+  if (jadwalBerubah || paketBerubah) {
     const effectiveDuration = (updates.durasi_total as number) || existing.durasi_total || 30
+
+    // Tanggal libur (hanya dicek jika jadwal diganti)
+    if (jadwalBerubah) {
+      const closedInfo = await checkIsDateClosed(supabase, tanggal)
+      if (closedInfo) return { error: pesanTutup(tanggal, closedInfo) }
+    }
+
+    // Jam operasional (dari Pengaturan) + batas jam tutup
+    const { jamBuka, jamTutup } = await bacaPengaturanOperasional(supabase)
+    if (!isSlotWithinOperatingHours(jamBaru, effectiveDuration, jamBuka, jamTutup)) {
+      return {
+        error: `Jam ${jamBaru} WIB dengan durasi ${effectiveDuration} menit berada di luar jam operasional atau melewati jam tutup studio (${jamBuka} - ${jamTutup}).`,
+      }
+    }
 
     // Cek ketersediaan slot (kecuali booking yang sedang di-edit)
     const { data: clashingBookings } = await supabase
@@ -845,11 +1010,13 @@ export async function updateBookingSchedule(
       .in('status', ['pending', 'booking'])
       .neq('id', bookingId)
 
-    if (clashingBookings && isSlotBlocked(jamMulai, effectiveDuration, clashingBookings)) {
+    if (clashingBookings && isSlotBlocked(jamBaru, effectiveDuration, clashingBookings)) {
       return { error: 'Slot jam pada tanggal tersebut sudah dipesan. Pilih jam lain.' }
     }
 
-    changes.push(`Jadwal: ${existing.tanggal} ${existing.jam_mulai} ➔ ${tanggal} ${jamMulai}`)
+    if (jadwalBerubah) {
+      changes.push(`Jadwal: ${existing.tanggal} ${jamLama} ➔ ${tanggal} ${jamBaru}`)
+    }
   }
   if (packageChangeNote) {
     changes.push(packageChangeNote)
@@ -858,31 +1025,38 @@ export async function updateBookingSchedule(
     changes.push(`Keterangan: ${ketTrimmed}`)
   }
 
-  if (changes.length > 0) {
-    const noteText = `[Update: ${changes.join(' | ')}]`
-    updates.catatan = existing.catatan
-      ? `${existing.catatan}\n${noteText}`
-      : noteText
+  if (changes.length === 0) {
+    return { success: true } // tidak ada yang berubah
   }
 
-  const { error } = await supabase
+  const noteText = `[Update: ${changes.join(' | ')}]`
+  updates.catatan = existing.catatan
+    ? `${existing.catatan}\n${noteText}`
+    : noteText
+
+  const { data: updated, error } = await supabase
     .from('bookings')
     .update(updates)
     .eq('id', bookingId)
+    .in('status', ['pending', 'booking'])
+    .select('id')
 
-  if (error) return { error: error.message }
+  if (error) {
+    if (error.code === KODE_UNIK_DILANGGAR) return { error: PESAN_SLOT_PENUH }
+    return { error: error.message }
+  }
+  if (!updated || updated.length === 0) {
+    return { error: 'Status booking baru saja berubah. Muat ulang halaman lalu coba lagi.' }
+  }
 
-  const logCatatan = changes.length > 0
-    ? `Diperbarui oleh admin. ${changes.join('. ')}`
-    : `Data diperbarui oleh admin`
-
-  await supabase.from('booking_status_log').insert({
+  const { error: logError } = await supabase.from('booking_status_log').insert({
     booking_id: bookingId,
-    status_dari: null,
-    status_ke: null,
-    catatan: logCatatan,
-    oleh: adminEmail || 'admin',
+    status_dari: existing.status,
+    status_ke: existing.status, // status tidak berubah; kolom ini wajib terisi
+    catatan: `Diperbarui oleh admin. ${changes.join('. ')}`,
+    oleh: auth.email,
   })
+  if (logError) console.error('Gagal menulis log jadwal:', logError.message)
 
   revalidatePath('/admin/bookings')
   revalidatePath('/')
@@ -891,21 +1065,48 @@ export async function updateBookingSchedule(
 
 // ---- Admin: mark waiting list contacted ----
 export async function markWaitingListContacted(id: string) {
+  const auth = await requireAdmin()
+  if ('error' in auth) return { error: auth.error }
   const supabase = await createAdminClient()
-  await supabase
+  const { error } = await supabase
     .from('waiting_list')
     .update({ sudah_dihubungi: true })
     .eq('id', id)
+  if (error) return { error: error.message }
   revalidatePath('/admin/waitinglist')
   return { success: true }
 }
 
 // ---- Admin: update settings ----
+const KUNCI_PENGATURAN = new Set([
+  'nama_studio', 'wa_admin', 'rekening_bni', 'rekening_bri', 'nama_rekening',
+  'dp_minimal', 'teks_sambutan', 'tampilkan_waiting', 'jam_buka', 'jam_tutup',
+  'slot_interval', 'max_booking_per_slot', 'backgrounds', 'closed_dates',
+])
+
 export async function updateSetting(key: string, value: unknown) {
+  const auth = await requireAdmin()
+  if ('error' in auth) return { error: auth.error }
+
+  if (!KUNCI_PENGATURAN.has(key)) return { error: `Pengaturan "${key}" tidak dikenal.` }
+  if (['dp_minimal', 'slot_interval', 'max_booking_per_slot'].includes(key)) {
+    const n = Number(value)
+    if (!Number.isFinite(n) || n < 0 || (key !== 'dp_minimal' && n < 1)) {
+      return { error: 'Angka tidak valid.' }
+    }
+  }
+  if (['jam_buka', 'jam_tutup'].includes(key) && !formatJamValid(value)) {
+    return { error: 'Format jam tidak valid (contoh 08:00).' }
+  }
+  if (['closed_dates', 'backgrounds'].includes(key) && !Array.isArray(value)) {
+    return { error: 'Format data tidak valid.' }
+  }
+
   const supabase = await createAdminClient()
-  await supabase
+  const { error } = await supabase
     .from('settings')
     .upsert({ key, value })
+  if (error) return { error: error.message }
   revalidatePath('/')
   revalidatePath('/admin/settings')
   return { success: true }
@@ -913,11 +1114,17 @@ export async function updateSetting(key: string, value: unknown) {
 
 // ---- Admin: upload background photo ----
 export async function uploadBackgroundImage(formData: FormData) {
+  const auth = await requireAdmin()
+  if ('error' in auth) return { error: auth.error }
+
   const file = formData.get('file') as File | null
   if (!file) return { error: 'File foto tidak ditemukan' }
+  if (!file.type.startsWith('image/')) return { error: 'File harus berupa gambar.' }
+  if (file.size > 8 * 1024 * 1024) return { error: 'Ukuran foto maksimal 8 MB.' }
 
   const supabase = await createAdminClient()
-  const ext = file.name.split('.').pop() || 'jpg'
+  const extAsli = (file.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '')
+  const ext = extAsli || 'jpg'
   const fileName = `bg-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`
 
   const arrayBuffer = await file.arrayBuffer()
@@ -946,6 +1153,8 @@ export async function uploadBackgroundImage(formData: FormData) {
 // ---- Admin: get signed URL untuk bukti transfer ----
 export async function getBuktiTransferSignedUrl(fileName: string): Promise<{ url?: string; error?: string }> {
   try {
+    const auth = await requireAdmin()
+    if ('error' in auth) return { error: auth.error }
     const supabase = await createAdminClient()
     const { data, error } = await supabase.storage
       .from('bukti-transfer')
@@ -964,9 +1173,24 @@ export async function getBuktiTransferSignedUrl(fileName: string): Promise<{ url
 export async function updateCetakStatus(
   bookingId: string,
   statusCetak: CetakStatus | null,
-  adminEmail?: string
+  _adminEmail?: string
 ) {
+  void _adminEmail // email diambil dari sesi login
+  const auth = await requireAdmin()
+  if ('error' in auth) return { error: auth.error }
+
+  if (statusCetak !== null && !['menunggu', 'proses', 'selesai'].includes(statusCetak)) {
+    return { error: 'Status cetak tidak valid.' }
+  }
+
   const supabase = await createAdminClient()
+
+  const { data: existing, error: fetchError } = await supabase
+    .from('bookings')
+    .select('status')
+    .eq('id', bookingId)
+    .single()
+  if (fetchError || !existing) return { error: 'Booking tidak ditemukan.' }
 
   const { error } = await supabase
     .from('bookings')
@@ -975,15 +1199,16 @@ export async function updateCetakStatus(
 
   if (error) return { error: error.message }
 
-  await supabase.from('booking_status_log').insert({
+  const { error: logError } = await supabase.from('booking_status_log').insert({
     booking_id: bookingId,
-    status_dari: null,
-    status_ke: null,
+    status_dari: existing.status,
+    status_ke: existing.status, // status booking tidak berubah; kolom ini wajib terisi
     catatan: statusCetak
       ? `Status cetak foto diubah ke: ${statusCetak}`
       : 'Status cetak foto direset',
-    oleh: adminEmail || 'admin',
+    oleh: auth.email,
   })
+  if (logError) console.error('Gagal menulis log cetak:', logError.message)
 
   revalidatePath('/admin/bookings')
   return { success: true }
@@ -992,6 +1217,8 @@ export async function updateCetakStatus(
 // ---- Admin: delete booking permanently ----
 export async function deleteBooking(bookingId: string) {
   try {
+    const auth = await requireAdmin()
+    if ('error' in auth) return { error: auth.error }
     const supabase = await createAdminClient()
 
     // Ambil info bukti transfer jika ada untuk dibersihkan dari storage
@@ -1030,6 +1257,8 @@ export async function deleteBooking(bookingId: string) {
 // ---- Admin: delete waiting list permanently ----
 export async function deleteWaitingList(id: string) {
   try {
+    const auth = await requireAdmin()
+    if ('error' in auth) return { error: auth.error }
     const supabase = await createAdminClient()
     const { error } = await supabase
       .from('waiting_list')

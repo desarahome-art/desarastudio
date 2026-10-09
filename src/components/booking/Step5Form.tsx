@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/Button'
 import { Input, Textarea } from '@/components/ui/Input'
@@ -103,6 +103,9 @@ export function Step5Form({
   // S&K Modal state
   const [showSkModal, setShowSkModal] = useState(false)
   const [agreedSk, setAgreedSk] = useState(false)
+  // Jam terpilih disimpan di ref agar memilih jam TIDAK memicu pengambilan ulang daftar slot
+  const jamRef = useRef(jam)
+  jamRef.current = jam
   const [availableSlots, setAvailableSlots] = useState<string[]>([])
   const [loadingSlots, setLoadingSlots] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -143,7 +146,7 @@ export function Step5Form({
       )
       const safe = Array.isArray(slots) ? slots : []
       setAvailableSlots(safe)
-      if (jam && !safe.includes(jam)) {
+      if (jamRef.current && !safe.includes(jamRef.current)) {
         setJam('')
       }
     } catch (err) {
@@ -152,7 +155,7 @@ export function Step5Form({
     } finally {
       setLoadingSlots(false)
     }
-  }, [tanggal, durasiTotal, settings?.jam_buka, settings?.jam_tutup, settings?.slot_interval, jam])
+  }, [tanggal, durasiTotal, settings?.jam_buka, settings?.jam_tutup, settings?.slot_interval])
 
   useEffect(() => {
     fetchSlots()

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/Button'
 import { Input, Textarea } from '@/components/ui/Input'
@@ -83,6 +83,10 @@ export function WaitingListModal({
   const selectedPackage = categoryPackages.find(p => p.id === packageId)
   const selectedAcara = activeWisudaEvents.find(e => e.id === acaraId)
 
+  // Jam terpilih disimpan di ref agar memilih jam tidak memicu pengambilan ulang slot dari server
+  const jamInginRef = useRef('')
+  jamInginRef.current = jamIngin
+
   // Fetch slots saat acara berubah
   const fetchSlotStatus = useCallback(async (selectedAcaraId: string) => {
     if (!selectedAcaraId) {
@@ -102,7 +106,7 @@ export function WaitingListModal({
       setTakenSlots(res.takenSlots || [])
 
       // Reset jam jika sudah diambil
-      if (jamIngin && res.takenSlots.includes(jamIngin)) {
+      if (jamInginRef.current && res.takenSlots.includes(jamInginRef.current)) {
         setJamIngin('')
       }
     } catch (err) {
@@ -110,7 +114,7 @@ export function WaitingListModal({
     } finally {
       setLoadingSlots(false)
     }
-  }, [settings?.jam_buka, settings?.jam_tutup, settings?.slot_interval, jamIngin])
+  }, [settings?.jam_buka, settings?.jam_tutup, settings?.slot_interval])
 
   useEffect(() => {
     if (acaraId) {

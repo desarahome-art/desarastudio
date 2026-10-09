@@ -15,6 +15,7 @@ export function SettingsClient({ settings: initialSettings }: SettingsClientProp
   const [settings, setSettings] = useState(initialSettings)
   const [saving, setSaving] = useState<string | null>(null)
   const [saved, setSaved] = useState<string | null>(null)
+  const [saveError, setSaveError] = useState('')
 
   // Background states
   const [newBgName, setNewBgName] = useState('')
@@ -34,12 +35,25 @@ export function SettingsClient({ settings: initialSettings }: SettingsClientProp
     return bg
   })
 
-  const save = async (key: string, value: unknown) => {
+  // Mengembalikan true jika berhasil disimpan; jika gagal, pesan error ditampilkan di atas halaman.
+  const save = async (key: string, value: unknown): Promise<boolean> => {
     setSaving(key)
-    await updateSetting(key, value)
-    setSaving(null)
-    setSaved(key)
-    setTimeout(() => setSaved(null), 2000)
+    setSaveError('')
+    try {
+      const res = await updateSetting(key, value)
+      if (res?.error) {
+        setSaveError(`Gagal menyimpan pengaturan: ${res.error}`)
+        return false
+      }
+      setSaved(key)
+      setTimeout(() => setSaved(null), 2000)
+      return true
+    } catch (err: unknown) {
+      setSaveError(`Gagal menyimpan pengaturan: ${(err as Error)?.message || 'terjadi kesalahan'}`)
+      return false
+    } finally {
+      setSaving(null)
+    }
   }
 
   // Tambah tanggal close / libur studio
@@ -160,6 +174,11 @@ export function SettingsClient({ settings: initialSettings }: SettingsClientProp
 
   return (
     <div className="flex flex-col gap-6 max-w-2xl">
+      {saveError && (
+        <div role="alert" className="p-3 rounded-xl bg-red-50 text-red-700 text-sm border border-red-200">
+          {saveError}
+        </div>
+      )}
       {/* Hidden file input untuk upload foto background */}
       <input
         type="file"
@@ -530,7 +549,9 @@ export function SettingsClient({ settings: initialSettings }: SettingsClientProp
             onClick={() => {
               const newVal = !settings.tampilkan_waiting
               setSettings(s => ({ ...s, tampilkan_waiting: newVal }))
-              save('tampilkan_waiting', newVal)
+              save('tampilkan_waiting', newVal).then(ok => {
+                if (!ok) setSettings(s => ({ ...s, tampilkan_waiting: !newVal })) // batalkan tampilan jika gagal
+              })
             }}
             className={`relative w-12 h-6 rounded-full transition-colors ${
               settings.tampilkan_waiting ? 'bg-[rgb(var(--color-forest))]' : 'bg-[rgb(var(--color-border))]'

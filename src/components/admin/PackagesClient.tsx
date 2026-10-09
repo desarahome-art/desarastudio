@@ -44,30 +44,52 @@ export function PackagesClient({ initialCategories, initialPackages }: PackagesC
   const [pkgForm, setPkgForm] = useState<PackageFormData>(emptyForm)
   const [editPkg, setEditPkg] = useState<Package | null>(null)
   const [addingToCat, setAddingToCat] = useState<string | null>(null)
+  const [pesanError, setPesanError] = useState('')
+
+  // Terjemahan pesan database yang paling sering muncul agar mudah dimengerti
+  const pesanGagal = (aksi: string, message: string, code?: string) => {
+    if (code === '23503' || /foreign key|violates/i.test(message)) {
+      return `${aksi}: data ini sudah dipakai oleh booking/add-on lain sehingga tidak bisa dihapus. Nonaktifkan saja jika tidak ingin ditampilkan.`
+    }
+    return `${aksi}: ${message}`
+  }
 
   const addCategory = async () => {
     if (!newCatName.trim()) return
     const slug = newCatName.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
     const maxUrutan = Math.max(0, ...categories.map(c => c.urutan)) + 1
-    const { data } = await supabase
+    setPesanError('')
+    const { data, error } = await supabase
       .from('categories')
       .insert({ nama: newCatName.trim(), slug, urutan: maxUrutan })
       .select()
       .single()
-    if (data) {
-      setCategories(prev => [...prev, data])
-      setNewCatName('')
+    if (error || !data) {
+      setPesanError(pesanGagal('Gagal menambah kategori', error?.message || 'tidak ada respon', error?.code))
+      return
     }
+    setCategories(prev => [...prev, data])
+    setNewCatName('')
   }
 
   const toggleCatAktif = async (cat: Category) => {
-    await supabase.from('categories').update({ aktif: !cat.aktif }).eq('id', cat.id)
+    setPesanError('')
+    const { error } = await supabase.from('categories').update({ aktif: !cat.aktif }).eq('id', cat.id)
+    if (error) {
+      setPesanError(pesanGagal('Gagal mengubah status kategori', error.message, error.code))
+      return
+    }
     setCategories(prev => prev.map(c => c.id === cat.id ? { ...c, aktif: !c.aktif } : c))
   }
 
   const deleteCat = async (id: string) => {
     if (!confirm('Hapus kategori ini? Semua paket di dalamnya juga terhapus.')) return
-    await supabase.from('categories').delete().eq('id', id)
+    setPesanError('')
+    const { error } = await supabase.from('categories').delete().eq('id', id)
+    if (error) {
+      setPesanError(pesanGagal('Gagal menghapus kategori', error.message, error.code))
+      return
+    }
     setCategories(prev => prev.filter(c => c.id !== id))
     setPackages(prev => prev.filter(p => p.category_id !== id))
   }
@@ -75,26 +97,47 @@ export function PackagesClient({ initialCategories, initialPackages }: PackagesC
   const savePackage = async () => {
     const catId = editPkg?.category_id || addingToCat
     if (!catId) return
+    setPesanError('')
+    if (!pkgForm.nama.trim()) {
+      setPesanError('Nama paket wajib diisi.')
+      return
+    }
+    if ((parseInt(pkgForm.harga) || 0) < 0 || (parseInt(pkgForm.durasi_menit) || 0) < 1) {
+      setPesanError('Harga tidak boleh negatif dan durasi minimal 1 menit.')
+      return
+    }
     const payload = {
       category_id: catId,
-      nama: pkgForm.nama,
+      nama: pkgForm.nama.trim(),
       harga: parseInt(pkgForm.harga) || 0,
       durasi_menit: parseInt(pkgForm.durasi_menit) || 60,
       jumlah_pilihan_background: parseInt(pkgForm.jumlah_pilihan_background) || 1,
       maks_orang: parseInt(pkgForm.maks_orang) || 1,
       cetak_ukuran: pkgForm.cetak_ukuran || null,
       cetak_jumlah: pkgForm.cetak_jumlah ? parseInt(pkgForm.cetak_jumlah) : null,
-      jumlah_foto_edit: null,
       bonus: pkgForm.bonus || null,
     }
 
+    // jumlah_foto_edit sengaja tidak ada di payload edit: nilai lama dipertahankan
     if (editPkg) {
-      const { data } = await supabase.from('packages').update(payload).eq('id', editPkg.id).select().single()
-      if (data) setPackages(prev => prev.map(p => p.id === editPkg.id ? data : p))
+      const { data, error } = await supabase.from('packages').update(payload).eq('id', editPkg.id).select().single()
+      if (error || !data) {
+        setPesanError(pesanGagal('Gagal menyimpan paket', error?.message || 'tidak ada respon', error?.code))
+        return // form tetap terbuka supaya isian tidak hilang
+      }
+      setPackages(prev => prev.map(p => p.id === editPkg.id ? data : p))
     } else {
       const maxUrutan = Math.max(0, ...packages.filter(p => p.category_id === catId).map(p => p.urutan)) + 1
-      const { data } = await supabase.from('packages').insert({ ...payload, urutan: maxUrutan }).select().single()
-      if (data) setPackages(prev => [...prev, data])
+      const { data, error } = await supabase
+        .from('packages')
+        .insert({ ...payload, jumlah_foto_edit: null, urutan: maxUrutan })
+        .select()
+        .single()
+      if (error || !data) {
+        setPesanError(pesanGagal('Gagal menyimpan paket', error?.message || 'tidak ada respon', error?.code))
+        return
+      }
+      setPackages(prev => [...prev, data])
     }
     setEditPkg(null)
     setAddingToCat(null)
@@ -103,12 +146,22 @@ export function PackagesClient({ initialCategories, initialPackages }: PackagesC
 
   const deletePkg = async (id: string) => {
     if (!confirm('Hapus paket ini?')) return
-    await supabase.from('packages').delete().eq('id', id)
+    setPesanError('')
+    const { error } = await supabase.from('packages').delete().eq('id', id)
+    if (error) {
+      setPesanError(pesanGagal('Gagal menghapus paket', error.message, error.code))
+      return
+    }
     setPackages(prev => prev.filter(p => p.id !== id))
   }
 
   return (
     <div className="flex flex-col gap-4">
+      {pesanError && (
+        <div role="alert" className="p-3 rounded-xl bg-red-50 text-red-700 text-sm border border-red-200">
+          {pesanError}
+        </div>
+      )}
       {/* Add category */}
       <div className="flex gap-2">
         <input
@@ -125,7 +178,7 @@ export function PackagesClient({ initialCategories, initialPackages }: PackagesC
       </div>
 
       {/* Category list */}
-      {categories.sort((a, b) => a.urutan - b.urutan).map(cat => {
+      {[...categories].sort((a, b) => a.urutan - b.urutan).map(cat => {
         const catPkgs = packages.filter(p => p.category_id === cat.id)
         const isExpanded = expandedCat === cat.id
 
@@ -153,7 +206,7 @@ export function PackagesClient({ initialCategories, initialPackages }: PackagesC
               <div className="border-t border-[rgb(var(--color-border))] p-4">
                 {/* Package list */}
                 <div className="flex flex-col gap-2 mb-4">
-                  {catPkgs.sort((a, b) => a.urutan - b.urutan).map(pkg => (
+                  {[...catPkgs].sort((a, b) => a.urutan - b.urutan).map(pkg => (
                     <div key={pkg.id} className="flex items-center gap-3 p-3 rounded-xl bg-[rgb(var(--color-cream-dark)/0.5)] text-sm">
                       <div className="flex-1 min-w-0">
                         <p className="font-medium">{pkg.nama}</p>

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useTransition, useMemo } from 'react'
-import { formatRupiah, cn } from '@/lib/utils'
+import { formatRupiah, cn, hariIniWIB, tambahHariWIB } from '@/lib/utils'
 import {
   updateBookingStatus,
   updateCetakStatus,
@@ -10,6 +10,7 @@ import {
   kurangiAddonLapangan,
 } from '@/app/actions'
 import { getMenitPerUnit } from '@/lib/addon-calc'
+import { linkAppWhatsApp, linkWebWhatsApp } from '@/lib/whatsapp'
 import { Button } from '@/components/ui/Button'
 import { AdminCalendarPicker } from './AdminCalendarPicker'
 import { RescheduleModal } from './RescheduleModal'
@@ -42,7 +43,7 @@ import {
   Minus,
 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
-import type { Booking, BookingStatus, CetakStatus, Package, Category, Addon, AddonCategory, BackgroundItem } from '@/types'
+import type { Booking, BookingStatus, CetakStatus, Package, Category, Addon, AddonCategory, BackgroundItem, ClosedDateItem } from '@/types'
 
 interface BookingRowProps {
   booking: Booking
@@ -78,14 +79,24 @@ function BookingRow({
 
   const handleStatus = (newStatus: BookingStatus) => {
     startTransition(async () => {
-      await updateBookingStatus(booking.id, newStatus, undefined, adminEmail)
+      try {
+        const res = await updateBookingStatus(booking.id, newStatus, undefined, adminEmail)
+        if (res?.error) alert(`Gagal mengubah status: ${res.error}`)
+      } catch (err: unknown) {
+        alert((err as Error)?.message || 'Terjadi kesalahan saat mengubah status.')
+      }
       onRefresh()
     })
   }
 
   const handleCetakStatus = (newCetakStatus: CetakStatus) => {
     startCetakTransition(async () => {
-      await updateCetakStatus(booking.id, newCetakStatus, adminEmail)
+      try {
+        const res = await updateCetakStatus(booking.id, newCetakStatus, adminEmail)
+        if (res?.error) alert(`Gagal mengubah status cetak: ${res.error}`)
+      } catch (err: unknown) {
+        alert((err as Error)?.message || 'Terjadi kesalahan saat mengubah status cetak.')
+      }
       onRefresh()
     })
   }
@@ -228,14 +239,25 @@ function BookingRow({
           {/* Informasi Sekunder Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3 text-sm mb-3 sm:mb-4">
             <ClientCardField label="WhatsApp">
-              <a
-                href={`https://wa.me/${booking.wa_klien}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-[rgb(var(--color-forest))] hover:underline inline-flex items-center gap-1"
-              >
-                {booking.wa_klien}
-              </a>
+              <span className="inline-flex items-center gap-2 flex-wrap">
+                {/* Langsung membuka aplikasi WhatsApp di laptop/HP */}
+                <a
+                  href={linkAppWhatsApp(booking.wa_klien)}
+                  className="text-[rgb(var(--color-forest))] hover:underline inline-flex items-center gap-1"
+                  title="Buka di aplikasi WhatsApp"
+                >
+                  {booking.wa_klien}
+                </a>
+                <a
+                  href={linkWebWhatsApp(booking.wa_klien)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[11px] text-[rgb(var(--color-text-muted))] hover:underline"
+                  title="Jika aplikasi WhatsApp belum terpasang"
+                >
+                  (WA Web)
+                </a>
+              </span>
             </ClientCardField>
 
             {booking.kampus && (
@@ -519,6 +541,8 @@ interface BookingsClientProps {
   addonCategories?: AddonCategory[]
   availableBackgrounds?: BackgroundItem[]
   jamTutup?: string
+  closedDates?: ClosedDateItem[]
+  namaStudio?: string
   adminEmail: string
 }
 
@@ -530,6 +554,8 @@ export function BookingsClient({
   addonCategories = [],
   availableBackgrounds = [],
   jamTutup = '20:00',
+  closedDates = [],
+  namaStudio,
   adminEmail,
 }: BookingsClientProps) {
   const [search, setSearch] = useState('')
@@ -579,7 +605,8 @@ export function BookingsClient({
   })
 
   // Booking untuk tanggal aktif terpilih atau hari ini
-  const today = new Date().toISOString().split('T')[0]
+  // Hari ini menurut WIB (bukan UTC), supaya jam 00:00–06:59 tidak salah tanggal
+  const today = hariIniWIB()
   const activeDate = filterTanggal || today
   const activeDayBookings = initialBookings.filter(
     b => b.tanggal === activeDate && b.status !== 'dibatalkan'
@@ -590,7 +617,7 @@ export function BookingsClient({
     { label: 'Hari Ini', value: today },
     {
       label: 'Besok',
-      value: new Date(Date.now() + 86400000).toISOString().split('T')[0],
+      value: tambahHariWIB(1),
     },
   ]
 
@@ -603,6 +630,7 @@ export function BookingsClient({
           packages={packages}
           categories={categories}
           adminEmail={adminEmail}
+          closedDates={closedDates}
           onClose={() => setRescheduleTarget(null)}
           onSuccess={() => router.refresh()}
         />
@@ -612,6 +640,7 @@ export function BookingsClient({
       {whatsAppTarget && (
         <WhatsAppTemplateModal
           booking={whatsAppTarget}
+          namaStudio={namaStudio}
           onClose={() => setWhatsAppTarget(null)}
         />
       )}
@@ -771,12 +800,14 @@ export function BookingsClient({
                     <span
                       className={cn(
                         'text-[10px] px-1.5 py-0.2 rounded font-medium',
-                        b.status === 'booking'
-                          ? 'bg-emerald-100 text-emerald-800'
-                          : 'bg-amber-100 text-amber-800'
+                        b.status === 'selesai'
+                          ? 'bg-teal-100 text-teal-800'
+                          : b.status === 'booking'
+                            ? 'bg-emerald-100 text-emerald-800'
+                            : 'bg-amber-100 text-amber-800'
                       )}
                     >
-                      {b.status === 'booking' ? 'Konfirm' : 'Menunggu'}
+                      {b.status === 'selesai' ? 'Selesai' : b.status === 'booking' ? 'Konfirm' : 'Menunggu'}
                     </span>
                   </div>
                   <p className="font-heading font-semibold text-xs truncate text-[rgb(var(--color-text))]">

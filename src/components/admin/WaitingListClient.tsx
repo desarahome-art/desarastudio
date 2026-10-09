@@ -7,7 +7,8 @@ import {
   deleteWaitingList,
 } from '@/app/actions'
 import { Button } from '@/components/ui/Button'
-import { parseWaitingListInfo, cn } from '@/lib/utils'
+import { parseWaitingListInfo, cn, hariIniWIB } from '@/lib/utils'
+import { linkAppWhatsApp, linkWebWhatsApp } from '@/lib/whatsapp'
 import {
   WaitingListStatusBadge,
   InfoChip,
@@ -54,7 +55,7 @@ function ConvertModal({
   loading: boolean
   error: string
 }) {
-  const today = new Date().toISOString().slice(0, 10)
+  const today = hariIniWIB() // tanggal WIB, bukan UTC
   const [tanggal, setTanggal] = useState(item.tanggal_ingin || today)
 
   return (
@@ -294,12 +295,19 @@ function WaitingListRow({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3 text-sm mb-3 sm:mb-4">
             <ClientCardField label="WhatsApp">
               <a
-                href={`https://wa.me/${item.wa}`}
-                target="_blank"
-                rel="noopener noreferrer"
+                href={linkAppWhatsApp(item.wa)}
+                title="Buka di aplikasi WhatsApp"
                 className="text-[rgb(var(--color-forest))] hover:underline inline-flex items-center gap-1"
               >
                 {item.wa}
+              </a>
+              <a
+                href={linkWebWhatsApp(item.wa)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="ml-2 text-[11px] text-[rgb(var(--color-text-muted))] hover:underline"
+              >
+                (WA Web)
               </a>
             </ClientCardField>
 
@@ -364,9 +372,8 @@ function WaitingListRow({
             {/* Secondary & Destructive Actions */}
             <div className="flex items-center gap-2">
               <a
-                href={`https://wa.me/${item.wa}`}
-                target="_blank"
-                rel="noopener noreferrer"
+                href={linkAppWhatsApp(item.wa)}
+                title="Buka di aplikasi WhatsApp"
                 className="flex-1 sm:flex-none"
               >
                 <Button
@@ -436,7 +443,8 @@ export function WaitingListClient({
 
   const handleContacted = (id: string) => {
     startTransition(async () => {
-      await markWaitingListContacted(id)
+      const res = await markWaitingListContacted(id)
+      if (res?.error) setFeedback({ type: 'error', message: res.error })
       router.refresh()
     })
   }

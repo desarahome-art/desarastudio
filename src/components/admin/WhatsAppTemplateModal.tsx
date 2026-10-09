@@ -17,6 +17,7 @@ import {
   Sparkles,
 } from 'lucide-react'
 import type { Booking } from '@/types'
+import { linkAppWhatsApp, linkWebWhatsApp } from '@/lib/whatsapp'
 
 export type WhatsAppTemplateType =
   | 'konfirmasi'
@@ -26,11 +27,13 @@ export type WhatsAppTemplateType =
 
 interface WhatsAppTemplateModalProps {
   booking: Booking
+  namaStudio?: string
   onClose: () => void
 }
 
 export function WhatsAppTemplateModal({
   booking,
+  namaStudio = 'Desara Home Studio',
   onClose,
 }: WhatsAppTemplateModalProps) {
   const [activeTab, setActiveTab] = useState<WhatsAppTemplateType>('konfirmasi')
@@ -38,7 +41,7 @@ export function WhatsAppTemplateModal({
 
   // Input tambahan opsional untuk kustomisasi pesan
   const [linkDrive, setLinkDrive] = useState('')
-  const catatanLokasi = 'Desara Home Studio'
+  const catatanLokasi = namaStudio // nama studio dari Pengaturan
 
   // Deteksi info cetak
   const hasCetakPaket = Boolean(
@@ -196,19 +199,9 @@ export function WhatsAppTemplateModal({
 
   const currentMessage = getMessageText(activeTab)
 
-  // Bersihkan format nomor WA (ganti 08xx ke 628xx jika perlu)
-  const cleanPhone = (phone: string) => {
-    let p = phone.replace(/[^0-9]/g, '')
-    if (p.startsWith('0')) {
-      p = '62' + p.slice(1)
-    }
-    return p
-  }
-
-  const waNumber = cleanPhone(booking.wa_klien)
-  const waUrl = `https://wa.me/${waNumber}?text=${encodeURIComponent(
-    currentMessage
-  )}`
+  // Tautan langsung ke aplikasi WhatsApp + cadangan WhatsApp Web
+  const waUrl = linkAppWhatsApp(booking.wa_klien, currentMessage)
+  const waWebUrl = linkWebWhatsApp(booking.wa_klien, currentMessage)
 
   const handleCopy = async () => {
     try {
@@ -405,8 +398,6 @@ export function WhatsAppTemplateModal({
 
             <a
               href={waUrl}
-              target="_blank"
-              rel="noopener noreferrer"
               className="w-full sm:flex-1"
             >
               <Button
@@ -417,6 +408,15 @@ export function WhatsAppTemplateModal({
                 <span>Buka & Kirim di WhatsApp</span>
                 <ExternalLink className="w-3.5 h-3.5 opacity-80" />
               </Button>
+            </a>
+            <a
+              href={waWebUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[11px] text-[rgb(var(--color-text-muted))] hover:underline self-center"
+              title="Jika aplikasi WhatsApp belum terpasang"
+            >
+              Buka di WhatsApp Web
             </a>
 
             <Button

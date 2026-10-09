@@ -5,7 +5,7 @@ import { motion } from 'framer-motion'
 import { Button } from '@/components/ui/Button'
 import { ModernDatePicker } from '@/components/booking/ModernDatePicker'
 import { getAvailableSlots, updateBookingSchedule } from '@/app/actions'
-import { formatRupiah } from '@/lib/utils'
+import { formatRupiah, normalizeTime } from '@/lib/utils'
 import { hitungMenitAddon } from '@/lib/addon-calc'
 import {
   X,
@@ -16,13 +16,14 @@ import {
   FileText,
   PackageCheck,
 } from 'lucide-react'
-import type { Booking, Package, Category } from '@/types'
+import type { Booking, Package, Category, ClosedDateItem } from '@/types'
 
 interface RescheduleModalProps {
   booking: Booking
   packages?: Package[]
   categories?: Category[]
   adminEmail: string
+  closedDates?: ClosedDateItem[]
   onClose: () => void
   onSuccess: () => void
 }
@@ -32,6 +33,7 @@ export function RescheduleModal({
   packages = [],
   categories = [],
   adminEmail,
+  closedDates = [],
   onClose,
   onSuccess,
 }: RescheduleModalProps) {
@@ -49,7 +51,7 @@ export function RescheduleModal({
     booking.package_id || ''
   )
   const [tanggal, setTanggal] = useState(booking.tanggal)
-  const [jam, setJam] = useState(booking.jam_mulai)
+  const [jam, setJam] = useState(normalizeTime(booking.jam_mulai))
   const [keterangan, setKeterangan] = useState('')
   const [availableSlots, setAvailableSlots] = useState<string[]>([])
   const [loadingSlots, setLoadingSlots] = useState(false)
@@ -99,13 +101,18 @@ export function RescheduleModal({
     let active = true
     setLoadingSlots(true)
 
-    getAvailableSlots(tanggal, effectiveDuration, '08:00', '20:00', 30)
+    // Jam buka/tutup/interval dibaca server dari Pengaturan; jam booking ini sendiri tidak dianggap penuh
+    getAvailableSlots(tanggal, effectiveDuration, undefined, undefined, undefined, {
+      kecualiBookingId: booking.id,
+      admin: true,
+    })
       .then(slots => {
         if (!active) return
         const finalSlots = Array.isArray(slots) ? [...slots] : []
         // Pastikan jam booking saat ini tetap muncul jika tanggal dan durasi sama
-        if (tanggal === booking.tanggal && !finalSlots.includes(booking.jam_mulai)) {
-          finalSlots.push(booking.jam_mulai)
+        const jamAsli = normalizeTime(booking.jam_mulai)
+        if (tanggal === booking.tanggal && !finalSlots.includes(jamAsli)) {
+          finalSlots.push(jamAsli)
           finalSlots.sort()
         }
         setAvailableSlots(finalSlots)
@@ -120,7 +127,7 @@ export function RescheduleModal({
     return () => {
       active = false
     }
-  }, [tanggal, effectiveDuration, booking.tanggal, booking.jam_mulai])
+  }, [tanggal, effectiveDuration, booking.id, booking.tanggal, booking.jam_mulai])
 
   const isPackageChanged = selectedPkgId !== (booking.package_id || '')
 
@@ -323,6 +330,7 @@ export function RescheduleModal({
             </label>
             <ModernDatePicker
               value={tanggal}
+              closedDates={closedDates}
               onChange={newDate => {
                 setTanggal(newDate)
                 setJam('')
