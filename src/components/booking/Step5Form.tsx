@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button'
 import { Input, Textarea } from '@/components/ui/Input'
 import { formatRupiah } from '@/lib/utils'
 import { getMenitPerUnit, labelSatuanWaktu } from '@/lib/addon-calc'
+import { normalisasiBackgrounds, kuotaBackgroundEfektif } from '@/lib/background'
 import { getAvailableSlots } from '@/app/actions'
 import { Minus, Plus, ArrowRight, ShieldCheck, X } from 'lucide-react'
 import { BackgroundSelector } from './BackgroundSelector'
@@ -88,7 +89,11 @@ export function Step5Form({
   onNext,
   onBack,
 }: Step5FormProps) {
-  const [selectedBg, setSelectedBg] = useState<string[]>(defaultValues.pilihan_background)
+  // Pilihan lama dari kategori sebelumnya dibuang jika tidak tersedia di kategori ini
+  const [selectedBg, setSelectedBg] = useState<string[]>(() => {
+    const tersedia = normalisasiBackgrounds(backgrounds).map(b => b.nama)
+    return defaultValues.pilihan_background.filter(b => tersedia.includes(b))
+  })
   const [wa, setWa] = useState(defaultValues.wa_klien)
   const [kampus, setKampus] = useState(defaultValues.kampus)
   const [tanggal, setTanggal] = useState(defaultValues.tanggal)
@@ -121,7 +126,11 @@ export function Step5Form({
   const bgExtra = addons
     .filter(a => a.jenis === 'background')
     .reduce((sum, a) => sum + (addonMap[a.id] || 0), 0)
-  const bgSlots = pkg.jumlah_pilihan_background + bgExtra
+  // Kuota tidak boleh melebihi jumlah background yang tersedia; 0 = seksi disembunyikan
+  const bgSlots = kuotaBackgroundEfektif(
+    pkg.jumlah_pilihan_background + bgExtra,
+    normalisasiBackgrounds(backgrounds).length
+  )
 
   const totalAddons = addons.reduce(
     (sum, a) => sum + (addonMap[a.id] || 0) * a.harga,
@@ -184,7 +193,7 @@ export function Step5Form({
 
   const validate = () => {
     const e: Record<string, string> = {}
-    if (selectedBg.length !== bgSlots)
+    if (bgSlots > 0 && selectedBg.length !== bgSlots)
       e.bg = `Silakan pilih tepat ${bgSlots} warna background (saat ini ${selectedBg.length} dipilih)`
     if (!wa.trim()) e.wa = 'Nomor WhatsApp aktif wajib diisi'
     if (!tanggal) e.tanggal = 'Silakan pilih tanggal sesi foto pada kalender'
@@ -207,7 +216,7 @@ export function Step5Form({
       .map(a => ({ addon: a, jumlah: addonMap[a.id] }))
 
     onNext({
-      pilihan_background: selectedBg,
+      pilihan_background: bgSlots > 0 ? selectedBg.slice(0, bgSlots) : [],
       wa_klien: wa,
       kampus,
       tanggal,
@@ -244,15 +253,17 @@ export function Step5Form({
 
       <div className="flex flex-col gap-8">
         {/* 1. SELEKSI BACKGROUND DENGAN PREVIEW FOTO */}
-        <section className="p-4 sm:p-5 rounded-3xl bg-[rgb(var(--color-surface))] border-2 border-[rgb(var(--color-border))] shadow-sm">
-          <BackgroundSelector
-            backgrounds={backgrounds}
-            selectedBg={selectedBg}
-            bgSlots={bgSlots}
-            onToggle={toggleBg}
-            error={errors.bg}
-          />
-        </section>
+        {bgSlots > 0 && (
+          <section className="p-4 sm:p-5 rounded-3xl bg-[rgb(var(--color-surface))] border-2 border-[rgb(var(--color-border))] shadow-sm">
+            <BackgroundSelector
+              backgrounds={backgrounds}
+              selectedBg={selectedBg}
+              bgSlots={bgSlots}
+              onToggle={toggleBg}
+              error={errors.bg}
+            />
+          </section>
+        )}
 
         {/* 2. PILIHAN TANGGAL MODERN (KALENDER INTERAKTIF) */}
         <section className="p-4 sm:p-5 rounded-3xl bg-[rgb(var(--color-surface))] border-2 border-[rgb(var(--color-border))] shadow-sm">

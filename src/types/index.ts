@@ -10,6 +10,8 @@ export interface BackgroundItem {
   id?: string
   nama: string
   image_url?: string
+  /** Kategori tempat background ini tampil. Kosong/tidak ada = tampil di SEMUA kategori. Array kosong [] = tidak tampil di mana pun. */
+  kategori_ids?: string[]
 }
 
 export interface ClosedDateItem {

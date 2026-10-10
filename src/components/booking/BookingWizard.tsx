@@ -12,6 +12,7 @@ import { Step7Sukses } from './Step7Sukses'
 import { WaitingListModal } from './WaitingListModal'
 import { PricelistModal } from './PricelistModal'
 import { submitBooking } from '@/app/actions'
+import { backgroundsUntukKategori } from '@/lib/background'
 import type {
   Settings, Category, Package, Addon,
   BookingFormAddon, Booking, BookingAddon, WisudaEvent
@@ -60,9 +61,8 @@ export function BookingWizard({
   const [booking, setBooking] = useState<Booking | null>(null)
   const [bookingAddons, setBookingAddons] = useState<BookingAddon[]>([])
 
-  const backgrounds = Array.isArray(settings.backgrounds)
-    ? settings.backgrounds
-    : []
+  // Hanya background yang diizinkan untuk kategori terpilih
+  const backgrounds = backgroundsUntukKategori(settings.backgrounds, category?.id)
 
   const categoryPackages = category
     ? packages.filter(p => p.category_id === category.id)

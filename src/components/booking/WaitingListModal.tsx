@@ -6,6 +6,8 @@ import { Button } from '@/components/ui/Button'
 import { Input, Textarea } from '@/components/ui/Input'
 import { submitWaitingList, getWisudaSlotStatus } from '@/app/actions'
 import { formatRupiah, timeToMinutes } from '@/lib/utils'
+import { backgroundsUntukKategori, kuotaBackgroundEfektif } from '@/lib/background'
+import { BackgroundSelector } from './BackgroundSelector'
 import {
   X,
   CheckCircle,
@@ -59,6 +61,7 @@ export function WaitingListModal({
   const [acaraId, setAcaraId] = useState('')
   const [jamIngin, setJamIngin] = useState('')
   const [catatan, setCatatan] = useState('')
+  const [selectedBg, setSelectedBg] = useState<string[]>([])
 
   // Slot state
   const [loadingSlots, setLoadingSlots] = useState(false)
@@ -82,6 +85,22 @@ export function WaitingListModal({
     : []
   const selectedPackage = categoryPackages.find(p => p.id === packageId)
   const selectedAcara = activeWisudaEvents.find(e => e.id === acaraId)
+
+  // Background: hanya yang diizinkan untuk kategori terpilih; kuota mengikuti paket
+  const bgList = backgroundsUntukKategori(settings?.backgrounds, categoryId)
+  const bgSlots = selectedPackage
+    ? kuotaBackgroundEfektif(selectedPackage.jumlah_pilihan_background, bgList.length)
+    : 0
+
+  const toggleBg = (bg: string) => {
+    if (selectedBg.includes(bg)) {
+      setSelectedBg(prev => prev.filter(b => b !== bg))
+      setErrors(prev => ({ ...prev, bg: '' }))
+    } else if (selectedBg.length < bgSlots) {
+      setSelectedBg(prev => [...prev, bg])
+      setErrors(prev => ({ ...prev, bg: '' }))
+    }
+  }
 
   // Jam terpilih disimpan di ref agar memilih jam tidak memicu pengambilan ulang slot dari server
   const jamInginRef = useRef('')
@@ -131,6 +150,11 @@ export function WaitingListModal({
     setPackageId('')
   }, [categoryId])
 
+  // Reset pilihan background jika paket atau kategori berubah
+  useEffect(() => {
+    setSelectedBg([])
+  }, [packageId, categoryId])
+
   // Pengelompokan slot jam
   const pagiSlots = allSlots.filter(s => { try { return timeToMinutes(s) < 12 * 60 } catch { return false } })
   const siangSlots = allSlots.filter(s => { try { const m = timeToMinutes(s); return m >= 12 * 60 && m < 15 * 60 } catch { return false } })
@@ -155,6 +179,8 @@ export function WaitingListModal({
     const e: Record<string, string> = {}
     if (!categoryId) e.category = 'Pilih kategori sesi foto terlebih dahulu'
     if (!packageId) e.package = 'Pilih paket foto yang diinginkan'
+    if (bgSlots > 0 && selectedBg.length !== bgSlots)
+      e.bg = `Silakan pilih tepat ${bgSlots} warna background (saat ini ${selectedBg.length} dipilih)`
     if (!nama.trim()) e.nama = 'Nama lengkap wajib diisi'
     if (!wa.trim()) e.wa = 'Nomor WhatsApp aktif wajib diisi'
     if (!acaraId) e.acara = 'Pilih acara wisuda terlebih dahulu'
@@ -174,6 +200,7 @@ export function WaitingListModal({
       category_id: categoryId,
       category_nama: selectedCategory!.nama,
       package_nama: selectedPackage?.nama,
+      pilihan_background: bgSlots > 0 ? selectedBg.slice(0, bgSlots) : undefined,
       acara_id: acaraId,
       acara_nama: selectedAcara?.nama,
       jam_ingin: jamIngin,
@@ -195,6 +222,7 @@ export function WaitingListModal({
     kampus.trim() ? `• Kampus/Instansi: *${kampus.trim()}*` : null,
     `• Kategori: *${selectedCategory?.nama || ''}*`,
     selectedPackage ? `• Paket: *${selectedPackage.nama}*` : null,
+    bgSlots > 0 && selectedBg.length > 0 ? `• Background: *${selectedBg.join(', ')}*` : null,
     selectedAcara ? `• Acara Wisuda: *${selectedAcara.nama}*` : null,
     jamIngin ? `• Jam: *${jamIngin} WIB*` : null,
     `• DP Waiting List: *${formatRupiah(dpMinimal)}*`,
@@ -504,6 +532,19 @@ export function WaitingListModal({
                     </motion.div>
                   )}
                 </AnimatePresence>
+
+                {/* ── PILIH BACKGROUND (muncul setelah pilih paket, jika ada background untuk kategori ini) ── */}
+                {bgSlots > 0 && (
+                  <div className="p-4 sm:p-5 rounded-3xl bg-[rgb(var(--color-surface))] border-2 border-[rgb(var(--color-border))] shadow-sm">
+                    <BackgroundSelector
+                      backgrounds={bgList}
+                      selectedBg={selectedBg}
+                      bgSlots={bgSlots}
+                      onToggle={toggleBg}
+                      error={errors.bg}
+                    />
+                  </div>
+                )}
 
                 {/* ── STEP 3: DATA IDENTITAS KLIEN ── */}
                 <div className="p-4 sm:p-5 rounded-3xl bg-[rgb(var(--color-surface))] border-2 border-[rgb(var(--color-border))] flex flex-col gap-3.5 shadow-sm">

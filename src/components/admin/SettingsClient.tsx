@@ -5,13 +5,14 @@ import { updateSetting, uploadBackgroundImage } from '@/app/actions'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Save, Plus, X, Check, Upload, Trash2, Image as ImageIcon, CalendarX, CalendarDays } from 'lucide-react'
-import type { Settings, BackgroundItem, ClosedDateItem } from '@/types'
+import type { Settings, BackgroundItem, ClosedDateItem, Category } from '@/types'
 
 interface SettingsClientProps {
   settings: Settings
+  categories?: Category[]
 }
 
-export function SettingsClient({ settings: initialSettings }: SettingsClientProps) {
+export function SettingsClient({ settings: initialSettings, categories = [] }: SettingsClientProps) {
   const [settings, setSettings] = useState(initialSettings)
   const [saving, setSaving] = useState<string | null>(null)
   const [saved, setSaved] = useState<string | null>(null)
@@ -147,6 +148,29 @@ export function SettingsClient({ settings: initialSettings }: SettingsClientProp
         fileInputRef.current.value = ''
       }
     }
+  }
+
+  // Kategori tempat background tampil. kategori_ids tidak ada = semua kategori.
+  const bgKategoriAktif = (bg: BackgroundItem): string[] =>
+    Array.isArray(bg.kategori_ids) ? bg.kategori_ids : categories.map(c => c.id)
+
+  const setBgKategori = (idx: number, ids: string[]) => {
+    const updated = [...normalizedBackgrounds]
+    const semua = categories.length > 0 && categories.every(c => ids.includes(c.id))
+    const { kategori_ids: _lama, ...sisa } = updated[idx]
+    void _lama
+    // Semua kategori terpilih -> simpan tanpa kategori_ids, supaya kategori baru otomatis ikut
+    updated[idx] = semua ? sisa : { ...sisa, kategori_ids: ids }
+    setSettings(s => ({ ...s, backgrounds: updated }))
+    save('backgrounds', updated)
+  }
+
+  const toggleBgKategori = (idx: number, categoryId: string) => {
+    const aktif = bgKategoriAktif(normalizedBackgrounds[idx])
+    setBgKategori(
+      idx,
+      aktif.includes(categoryId) ? aktif.filter(id => id !== categoryId) : [...aktif, categoryId]
+    )
   }
 
   // Hapus foto hasil dari background tertentu
@@ -315,7 +339,7 @@ export function SettingsClient({ settings: initialSettings }: SettingsClientProp
               Daftar Background & Foto Contoh Hasil
             </h2>
             <p className="text-xs text-[rgb(var(--color-text-muted))]">
-              Unggah foto contoh asli hasil foto studio untuk setiap warna background agar klien melihat hasil nyata.
+              Unggah foto contoh asli hasil foto studio untuk setiap warna background agar klien melihat hasil nyata. Centang kategori agar background hanya tampil di kategori tersebut; jika tidak ada yang dicentang, background tidak tampil di mana pun.
             </p>
           </div>
         </div>
@@ -370,6 +394,45 @@ export function SettingsClient({ settings: initialSettings }: SettingsClientProp
                     {bg.image_url ? 'Ganti Foto' : 'Upload Foto'}
                   </Button>
                 </div>
+                {categories.length > 0 && (
+                  <div className="mt-2">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] font-semibold uppercase tracking-wide text-[rgb(var(--color-text-muted))]">
+                        Tampil di kategori
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setBgKategori(idx, categories.map(c => c.id))}
+                        className="text-[10px] font-semibold text-[rgb(var(--color-forest))] hover:underline"
+                      >
+                        Pilih semua
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      {categories.map(cat => {
+                        const on = bgKategoriAktif(bg).includes(cat.id)
+                        return (
+                          <button
+                            key={cat.id}
+                            type="button"
+                            aria-pressed={on}
+                            onClick={() => toggleBgKategori(idx, cat.id)}
+                            className={`text-[11px] px-2 py-0.5 rounded-full border transition-colors ${
+                              on
+                                ? 'bg-[rgb(var(--color-forest))] text-white border-[rgb(var(--color-forest))] font-semibold'
+                                : 'bg-[rgb(var(--color-cream))] text-[rgb(var(--color-text-muted))] border-[rgb(var(--color-border))] hover:border-[rgb(var(--color-forest))]'
+                            }`}
+                          >
+                            {cat.nama}
+                          </button>
+                        )
+                      })}
+                    </div>
+                    {bgKategoriAktif(bg).length === 0 && (
+                      <p className="text-[10px] text-amber-600 mt-1">Belum tampil di kategori mana pun.</p>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Hapus Background */}

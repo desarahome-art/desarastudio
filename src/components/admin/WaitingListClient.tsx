@@ -317,6 +317,12 @@ function WaitingListRow({
               </ClientCardField>
             )}
 
+            {parsed.background && (
+              <ClientCardField label="Background Dipilih">
+                {parsed.background.join(', ')}
+              </ClientCardField>
+            )}
+
             {item.acara_nama && (
               <ClientCardField label="Acara Wisuda">
                 <span className="text-purple-900 font-medium">{item.acara_nama}</span>

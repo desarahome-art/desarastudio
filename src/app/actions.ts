@@ -15,6 +15,7 @@ import {
   formatTanggalValid,
   formatJamValid,
 } from '@/lib/utils'
+import { backgroundsUntukKategori, kuotaBackgroundEfektif } from '@/lib/background'
 import {
   getMenitPerUnit,
   hitungMenitAddon,
@@ -99,6 +100,16 @@ async function bacaPengaturanOperasional(supabase: AdminClient) {
     // pakai nilai bawaan
   }
   return hasil
+}
+
+// Background yang boleh dipilih untuk satu kategori, selalu dibaca dari database
+async function bacaBackgroundKategori(supabase: AdminClient, categoryId: string | null | undefined) {
+  try {
+    const { data } = await supabase.from('settings').select('value').eq('key', 'backgrounds').maybeSingle()
+    return backgroundsUntukKategori(Array.isArray(data?.value) ? data.value : [], categoryId)
+  } catch {
+    return []
+  }
 }
 
 // Jam yang sudah lewat (hari ini) tidak boleh dipesan klien.
@@ -189,6 +200,21 @@ export async function submitBooking(formData: BookingFormData) {
     addonRows.push({ ...da, jumlah: qty })
   }
 
+  // Validasi background: harus milik kategori paket & tidak melebihi kuota
+  const bgTersedia = await bacaBackgroundKategori(supabase, pkg.category_id)
+  const namaBgTersedia = new Set(bgTersedia.map(b => b.nama))
+  const bgDipilih = Array.from(
+    new Set((formData.pilihan_background || []).map(b => String(b).trim()).filter(Boolean))
+  )
+  if (bgDipilih.some(b => !namaBgTersedia.has(b))) {
+    return { error: 'Ada pilihan background yang tidak tersedia untuk kategori ini. Silakan muat ulang halaman.' }
+  }
+  const bgTambahan = addonRows.filter(a => a.jenis === 'background').reduce((sum, a) => sum + a.jumlah, 0)
+  const maksBg = kuotaBackgroundEfektif(pkg.jumlah_pilihan_background + bgTambahan, bgTersedia.length)
+  if (bgDipilih.length > maksBg) {
+    return { error: `Pilihan background maksimal ${maksBg}.` }
+  }
+
   // Check slot availability server-side
   const jamMulai = normalizeTime(formData.jam_mulai)
   const durasiTotal = pkg.durasi_menit + hitungMenitAddon(addonRows)
@@ -252,7 +278,7 @@ export async function submitBooking(formData: BookingFormData) {
       total_harga: totalHarga,
       dp_dibayar: dpDibayar,
       catatan: formData.catatan || null,
-      pilihan_background: formData.pilihan_background,
+      pilihan_background: bgDipilih,
       bukti_transfer: buktiPath,
       status: 'pending',
       status_cetak: hasCetak ? 'menunggu' : null,
@@ -308,6 +334,7 @@ export async function submitWaitingList(data: {
   category_id: string
   category_nama: string
   package_nama?: string
+  pilihan_background?: string[]
   kampus?: string
   acara_id?: string
   acara_nama?: string
@@ -396,6 +423,28 @@ export async function submitWaitingList(data: {
   const { dpMinimal: dpPengaturan } = await bacaPengaturanOperasional(supabase)
   const dpAmount = dpPengaturan
 
+  // Validasi background: harus milik kategori yang dipilih & tidak melebihi kuota paket
+  const bgDipilih = Array.from(
+    new Set((data.pilihan_background || []).map(b => String(b).trim()).filter(Boolean))
+  )
+  if (bgDipilih.length > 0) {
+    const bgTersedia = await bacaBackgroundKategori(supabase, data.category_id)
+    const namaBgTersedia = new Set(bgTersedia.map(b => b.nama))
+    if (bgDipilih.some(b => !namaBgTersedia.has(b))) {
+      return { error: 'Ada pilihan background yang tidak tersedia untuk kategori ini. Silakan muat ulang halaman.' }
+    }
+    const { data: paketRow } = await supabase
+      .from('packages')
+      .select('jumlah_pilihan_background')
+      .eq('category_id', data.category_id)
+      .eq('nama', data.package_nama || '')
+      .maybeSingle()
+    const maksBg = kuotaBackgroundEfektif(Number(paketRow?.jumlah_pilihan_background) || 0, bgTersedia.length)
+    if (bgDipilih.length > maksBg) {
+      return { error: `Pilihan background maksimal ${maksBg}.` }
+    }
+  }
+
   // Format catatan lengkap
   const detailList: string[] = [
     `[Jam: ${data.jam_ingin}]`,
@@ -403,6 +452,7 @@ export async function submitWaitingList(data: {
   ]
   if (data.kampus?.trim()) detailList.push(`Kampus/Instansi: ${data.kampus.trim()}`)
   if (data.package_nama?.trim()) detailList.push(`Paket: ${data.package_nama.trim()}`)
+  if (bgDipilih.length > 0) detailList.push(`Background: ${bgDipilih.join(', ')}`)
   if (data.catatan?.trim()) detailList.push(`Catatan: ${data.catatan.trim()}`)
 
   const combinedCatatan = detailList.join(' | ')
@@ -694,6 +744,10 @@ export async function convertWaitingListToBooking(
     return { error: `Jam ${jamMulai} WIB pada ${tanggal} sudah dipakai booking lain. Pilih tanggal lain.` }
   }
 
+  // Background pilihan klien dibawa ke booking (hanya yang masih tersedia untuk kategori itu)
+  const bgBoleh = new Set((await bacaBackgroundKategori(supabase, wl.category_id)).map(b => b.nama))
+  const bgKonversi = (parsedInfo.background || []).filter(b => bgBoleh.has(b))
+
   // 3. Masukkan ke tabel bookings dengan status 'pending' (Menunggu)
   const { data: newBooking, error: insertError } = await supabase
     .from('bookings')
@@ -714,7 +768,7 @@ export async function convertWaitingListToBooking(
       total_harga: totalHarga,
       dp_dibayar: dpDibayar,
       catatan: `[Dikonversi dari Waiting List] ${wl.catatan || ''}`.trim(),
-      pilihan_background: [],
+      pilihan_background: bgKonversi,
       bukti_transfer: null,
       status: 'pending',
       status_cetak: paketPunyaCetak(selectedPkg) ? 'menunggu' : null,
@@ -1389,6 +1443,10 @@ export async function addAddonsToBooking(
     const bgLama: string[] = Array.isArray(booking.pilihan_background) ? booking.pilihan_background : []
     const bgBaru = Array.from(new Set((backgroundsDipilih || []).map(b => String(b).trim()).filter(Boolean)))
       .filter(b => !bgLama.includes(b))
+    const bgBoleh = new Set((await bacaBackgroundKategori(supabase, booking.category_id)).map(b => b.nama))
+    if (bgBaru.some(b => !bgBoleh.has(b))) {
+      return { error: 'Ada warna background yang tidak tersedia untuk kategori booking ini.' }
+    }
     if (bgBaru.length > rencana.tambahanBackground) {
       return { error: `Warna background tambahan maksimal ${rencana.tambahanBackground}.` }
     }

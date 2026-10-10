@@ -5,10 +5,13 @@
 /**
  * Normalisasi nomor ke format internasional Indonesia tanpa tanda "+".
  * "0812-3456 789" -> "628123456789", "+62 812..." -> "62812...", "812..." -> "62812..."
+ * "62 0812..." -> "62812...", "0062 812..." -> "62812..."
  */
 export function normalisasiNomorWa(nomor: string | null | undefined): string {
   let p = String(nomor || '').replace(/[^0-9]/g, '')
-  if (p.startsWith('0')) p = '62' + p.slice(1)
+  if (p.startsWith('00')) p = p.slice(2)
+  if (p.startsWith('620')) p = '62' + p.slice(3)
+  else if (p.startsWith('0')) p = '62' + p.slice(1)
   else if (p.startsWith('8')) p = '62' + p
   return p
 }

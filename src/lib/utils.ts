@@ -183,6 +183,7 @@ export function parseWaitingListInfo(catatan?: string | null): {
   kampus?: string
   dp?: string
   bookingKode?: string
+  background?: string[]
   catatanTambahan?: string
 } {
   if (!catatan) return {}
@@ -193,12 +194,17 @@ export function parseWaitingListInfo(catatan?: string | null): {
   const kampusMatch = catatan.match(/Kampus(?:\/Instansi)?:\s*([^|\]]+)/i)
   const dpMatch = catatan.match(/DP:\s*([^|\]]+)/i)
   const catMatch = catatan.match(/Catatan:\s*([^|\]]+)/i)
+  const bgMatch = catatan.match(/(?:^|\|)\s*Background:\s*([^|\]]+)/i)
+  const background = bgMatch
+    ? bgMatch[1].split(',').map(b => b.trim()).filter(Boolean)
+    : []
 
   return {
     jam: jamMatch ? jamMatch[1] : undefined,
     kampus: kampusMatch ? kampusMatch[1].trim() : undefined,
     dp: dpMatch ? dpMatch[1].trim() : undefined,
     bookingKode: bookingMatch ? bookingMatch[1].trim() : undefined,
+    background: background.length > 0 ? background : undefined,
     catatanTambahan: catMatch ? catMatch[1].trim() : undefined,
   }
 }

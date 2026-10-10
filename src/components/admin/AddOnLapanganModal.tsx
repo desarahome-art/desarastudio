@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/Button'
 import { formatRupiah, timeToMinutes, minutesToTime } from '@/lib/utils'
 import { addAddonsToBooking } from '@/app/actions'
 import { getMenitPerUnit, sisaKuota, ringkasanSetelah, jumlahTerpakai } from '@/lib/addon-calc'
+import { backgroundsUntukKategori } from '@/lib/background'
 import type { Booking, Addon, BackgroundItem } from '@/types'
 
 interface AddOnLapanganModalProps {
@@ -28,11 +29,16 @@ interface AddOnLapanganModalProps {
 export function AddOnLapanganModal({
   booking,
   addons,
-  availableBackgrounds = [],
+  availableBackgrounds: semuaBackgrounds = [],
   jamTutup = '20:00',
   onClose,
   onSuccess,
 }: AddOnLapanganModalProps) {
+  // Warna tambahan mengikuti kategori booking
+  const availableBackgrounds = useMemo(
+    () => backgroundsUntukKategori(semuaBackgrounds, booking.category_id),
+    [semuaBackgrounds, booking.category_id]
+  )
   const [selectedQty, setSelectedQty] = useState<Record<string, number>>({})
   const [catatan, setCatatan] = useState('')
   const [newSelectedBg, setNewSelectedBg] = useState<string[]>([])
