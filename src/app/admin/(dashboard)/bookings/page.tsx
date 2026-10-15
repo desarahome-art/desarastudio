@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
-import { BookingsClient } from '@/components/admin/BookingsClient'
+import { BookingsClient, type RiwayatPembayaran } from '@/components/admin/BookingsClient'
 import { normalizeTime } from '@/lib/utils'
 import type { BackgroundItem, ClosedDateItem } from '@/types'
 
@@ -15,6 +15,7 @@ export default async function BookingsPage() {
     { data: addons },
     { data: addonCategories },
     { data: settingsRows },
+    { data: logPembayaran },
   ] = await Promise.all([
     supabase
       .from('bookings')
@@ -37,7 +38,24 @@ export default async function BookingsPage() {
       .from('settings')
       .select('key, value')
       .in('key', ['backgrounds', 'jam_tutup', 'jam_buka', 'closed_dates', 'nama_studio']),
+    // Riwayat cicilan/pelunasan/koreksi (ditulis oleh catatPembayaran & koreksiPembayaran)
+    supabase
+      .from('booking_status_log')
+      .select('booking_id, catatan, oleh, created_at')
+      .or('catatan.ilike.Pembayaran*,catatan.ilike.Koreksi*')
+      .order('created_at', { ascending: true }),
   ])
+
+  const riwayatPembayaran: Record<string, RiwayatPembayaran[]> = {}
+  for (const log of logPembayaran || []) {
+    const catatan = String(log.catatan || '')
+    if (!catatan.startsWith('Pembayaran ') && !catatan.startsWith('Koreksi pembayaran')) continue
+    ;(riwayatPembayaran[log.booking_id] ||= []).push({
+      catatan,
+      oleh: log.oleh,
+      created_at: log.created_at,
+    })
+  }
 
   let availableBackgrounds: BackgroundItem[] = []
   let jamTutup = '20:00'
@@ -77,6 +95,7 @@ export default async function BookingsPage() {
         closedDates={closedDates}
         namaStudio={namaStudio}
         adminEmail={user.user?.email || ''}
+        riwayatPembayaran={riwayatPembayaran}
       />
     </div>
   )

@@ -121,8 +121,10 @@ export function WhatsAppTemplateModal({
           ``,
           `💰 *Rincian Pembayaran:*`,
           `• Total Biaya: ${formatRupiah(booking.total_harga)}`,
-          `• DP Dibayar: ${formatRupiah(booking.dp_dibayar)}`,
-          `• Sisa Pelunasan: *${formatRupiah(booking.sisa_pelunasan)}*`,
+          `• Sudah Dibayar: ${formatRupiah(booking.dp_dibayar)}`,
+          booking.sisa_pelunasan > 0
+            ? `• Sisa Pelunasan: *${formatRupiah(booking.sisa_pelunasan)}*`
+            : `• Status Pembayaran: *Lunas*`,
           ``,
           `Mohon hadir tepat waktu (disarankan tiba 10-15 menit sebelum sesi dimulai). Sampai jumpa di studio! ✨`,
         ]

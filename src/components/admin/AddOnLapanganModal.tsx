@@ -360,7 +360,7 @@ export function AddOnLapanganModal({
               <span className="font-bold text-[rgb(var(--color-text))]">{formatRupiah(ringkasan.totalBaru)}</span>
             </div>
             <div className="flex justify-between text-[rgb(var(--color-text-muted))]">
-              <span>DP Dibayar:</span>
+              <span>Sudah Dibayar:</span>
               <span className="font-medium text-[rgb(var(--color-text))]">{formatRupiah(ringkasan.dp)}</span>
             </div>
             <div className="flex justify-between text-[rgb(var(--color-text-muted))]">

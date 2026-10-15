@@ -14,6 +14,7 @@ import {
   menitSekarangWIB,
   formatTanggalValid,
   formatJamValid,
+  formatRupiah,
 } from '@/lib/utils'
 import { backgroundsUntukKategori, kuotaBackgroundEfektif } from '@/lib/background'
 import {
@@ -907,7 +908,7 @@ export async function updateBookingStatus(
 
   const { data: existing, error: fetchError } = await supabase
     .from('bookings')
-    .select('status')
+    .select('status, total_harga, dp_dibayar')
     .eq('id', bookingId)
     .single()
 
@@ -925,17 +926,36 @@ export async function updateBookingStatus(
     return { error: `Tidak bisa mengubah status dari ${current} ke ${statusBaru}.` }
   }
 
+  // Sesi selesai = tagihan dianggap lunas: sisa pelunasan otomatis dicatat sebagai dibayar
+  const totalHarga = Number(existing.total_harga) || 0
+  const dibayarLama = Number(existing.dp_dibayar) || 0
+  const sisaOtomatis = statusBaru === 'selesai' ? Math.max(0, totalHarga - dibayarLama) : 0
+
   // .eq('status', current): kalau admin lain sudah mengubahnya, update ini tidak menimpa
-  const { data: updated, error } = await supabase
+  let query = supabase
     .from('bookings')
-    .update({ status: statusBaru })
+    .update(sisaOtomatis > 0 ? { status: statusBaru, dp_dibayar: totalHarga } : { status: statusBaru })
     .eq('id', bookingId)
     .eq('status', current)
-    .select('id')
+  if (sisaOtomatis > 0) query = query.eq('dp_dibayar', dibayarLama)
+  const { data: updated, error } = await query.select('id')
 
   if (error) return { error: error.message }
   if (!updated || updated.length === 0) {
-    return { error: 'Status booking sudah diubah pihak lain. Muat ulang halaman.' }
+    return { error: 'Data booking sudah diubah pihak lain. Muat ulang halaman.' }
+  }
+
+  if (sisaOtomatis > 0) {
+    const { error: logBayarError } = await supabase.from('booking_status_log').insert({
+      booking_id: bookingId,
+      status_dari: current,
+      status_ke: statusBaru,
+      catatan:
+        `${LOG_BAYAR} pelunasan ${formatRupiah(sisaOtomatis)} (otomatis saat sesi selesai) · ` +
+        `dibayar ${formatRupiah(dibayarLama)} → ${formatRupiah(totalHarga)}`,
+      oleh: auth.email,
+    })
+    if (logBayarError) console.error('Gagal menulis log pelunasan otomatis:', logBayarError.message)
   }
 
   const { error: logError } = await supabase.from('booking_status_log').insert({
@@ -1537,4 +1557,134 @@ export async function kurangiAddonLapangan(
   } catch (err: unknown) {
     return { error: (err as Error)?.message || 'Gagal mengoreksi add-on di lapangan.' }
   }
+}
+
+
+// ============================================================
+// ---- Admin: pembayaran (cicilan / pelunasan / koreksi) ----
+// Kolom bookings.dp_dibayar dipakai sebagai TOTAL YANG SUDAH DIBAYAR
+// (DP awal + semua cicilan). sisa_pelunasan = generated column, ikut otomatis.
+// Riwayat setiap pembayaran ditulis ke booking_status_log (status tidak berubah).
+// ============================================================
+
+export type MetodePembayaran = 'transfer' | 'tunai'
+
+// Awalan catatan log; dipakai juga oleh halaman admin untuk mengambil riwayat pembayaran
+const LOG_BAYAR = 'Pembayaran'
+const LOG_KOREKSI = 'Koreksi pembayaran'
+const BATAS_NOMINAL = 100_000_000
+
+function nominalValid(n: unknown): n is number {
+  return typeof n === 'number' && Number.isInteger(n) && n >= 0 && n <= BATAS_NOMINAL
+}
+
+export async function catatPembayaran(
+  bookingId: string,
+  jumlah: number,
+  metode: MetodePembayaran,
+  catatan?: string
+): Promise<{ error?: string; success?: boolean; lunas?: boolean }> {
+  const auth = await requireAdmin()
+  if ('error' in auth) return { error: auth.error }
+
+  if (!nominalValid(jumlah) || jumlah <= 0) return { error: 'Jumlah pembayaran tidak valid.' }
+  if (metode !== 'transfer' && metode !== 'tunai') return { error: 'Metode pembayaran tidak valid.' }
+  const catatanBersih = (catatan || '').trim().slice(0, 200)
+
+  const supabase = await createAdminClient()
+  const { data: b, error: fetchError } = await supabase
+    .from('bookings')
+    .select('status, total_harga, dp_dibayar')
+    .eq('id', bookingId)
+    .single()
+  if (fetchError || !b) return { error: 'Booking tidak ditemukan.' }
+  if (b.status === 'dibatalkan') return { error: 'Booking sudah dibatalkan; pembayaran tidak bisa dicatat.' }
+
+  const total = Number(b.total_harga) || 0
+  const sudah = Number(b.dp_dibayar) || 0
+  const sisa = total - sudah
+  if (sisa <= 0) return { error: 'Booking ini sudah lunas.' }
+  if (jumlah > sisa) {
+    return { error: `Jumlah melebihi sisa pelunasan (${formatRupiah(sisa)}).` }
+  }
+
+  const baru = sudah + jumlah
+  // .eq('dp_dibayar', sudah): kalau admin lain baru saja mencatat, update ini tidak menimpa
+  const { data: updated, error } = await supabase
+    .from('bookings')
+    .update({ dp_dibayar: baru })
+    .eq('id', bookingId)
+    .eq('dp_dibayar', sudah)
+    .select('id')
+  if (error) return { error: error.message }
+  if (!updated || updated.length === 0) {
+    return { error: 'Data pembayaran baru saja berubah. Muat ulang halaman lalu coba lagi.' }
+  }
+
+  const lunas = baru >= total
+  const { error: logError } = await supabase.from('booking_status_log').insert({
+    booking_id: bookingId,
+    status_dari: b.status,
+    status_ke: b.status, // status booking tidak berubah; kolom ini wajib terisi
+    catatan:
+      `${LOG_BAYAR} ${lunas ? 'pelunasan' : 'cicilan'} ${formatRupiah(jumlah)} ` +
+      `(${metode === 'tunai' ? 'Tunai' : 'Transfer'}) · dibayar ${formatRupiah(sudah)} → ${formatRupiah(baru)}` +
+      (catatanBersih ? ` · ${catatanBersih}` : ''),
+    oleh: auth.email,
+  })
+  if (logError) console.error('Gagal menulis log pembayaran:', logError.message)
+
+  revalidatePath('/admin/bookings')
+  return { success: true, lunas }
+}
+
+export async function koreksiPembayaran(
+  bookingId: string,
+  totalDibayarBaru: number,
+  alasan: string
+): Promise<{ error?: string; success?: boolean }> {
+  const auth = await requireAdmin()
+  if ('error' in auth) return { error: auth.error }
+
+  if (!nominalValid(totalDibayarBaru)) return { error: 'Nominal tidak valid.' }
+  const alasanBersih = (alasan || '').trim().slice(0, 200)
+  if (alasanBersih.length < 3) return { error: 'Alasan koreksi wajib diisi.' }
+
+  const supabase = await createAdminClient()
+  const { data: b, error: fetchError } = await supabase
+    .from('bookings')
+    .select('status, total_harga, dp_dibayar')
+    .eq('id', bookingId)
+    .single()
+  if (fetchError || !b) return { error: 'Booking tidak ditemukan.' }
+
+  const total = Number(b.total_harga) || 0
+  const lama = Number(b.dp_dibayar) || 0
+  if (totalDibayarBaru > total) {
+    return { error: `Total dibayar tidak boleh melebihi total harga (${formatRupiah(total)}).` }
+  }
+  if (totalDibayarBaru === lama) return { error: 'Nominal sama dengan sebelumnya.' }
+
+  const { data: updated, error } = await supabase
+    .from('bookings')
+    .update({ dp_dibayar: totalDibayarBaru })
+    .eq('id', bookingId)
+    .eq('dp_dibayar', lama)
+    .select('id')
+  if (error) return { error: error.message }
+  if (!updated || updated.length === 0) {
+    return { error: 'Data pembayaran baru saja berubah. Muat ulang halaman lalu coba lagi.' }
+  }
+
+  const { error: logError } = await supabase.from('booking_status_log').insert({
+    booking_id: bookingId,
+    status_dari: b.status,
+    status_ke: b.status,
+    catatan: `${LOG_KOREKSI}: dibayar ${formatRupiah(lama)} → ${formatRupiah(totalDibayarBaru)} · alasan: ${alasanBersih}`,
+    oleh: auth.email,
+  })
+  if (logError) console.error('Gagal menulis log koreksi pembayaran:', logError.message)
+
+  revalidatePath('/admin/bookings')
+  return { success: true }
 }

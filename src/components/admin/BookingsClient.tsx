@@ -16,6 +16,7 @@ import { AdminCalendarPicker } from './AdminCalendarPicker'
 import { RescheduleModal } from './RescheduleModal'
 import { WhatsAppTemplateModal } from './WhatsAppTemplateModal'
 import { AddOnLapanganModal } from './AddOnLapanganModal'
+import { PembayaranModal, type ModePembayaran } from './PembayaranModal'
 import {
   BookingStatusBadge,
   CetakBadge,
@@ -41,12 +42,60 @@ import {
   PlusCircle,
   Sparkles,
   Minus,
+  Wallet,
+  PencilLine,
+  BadgeCheck,
 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import type { Booking, BookingStatus, CetakStatus, Package, Category, Addon, AddonCategory, BackgroundItem, ClosedDateItem } from '@/types'
 
+export interface RiwayatPembayaran {
+  catatan: string
+  oleh: string | null
+  created_at: string
+}
+
+// dp_dibayar = total yang sudah dibayar (DP awal + cicilan)
+function infoBayar(b: Booking) {
+  const total = Number(b.total_harga) || 0
+  const dibayar = Number(b.dp_dibayar) || 0
+  const sisa = total - dibayar
+  return { total, dibayar, sisa, lunas: sisa <= 0 }
+}
+
+function formatWaktuLog(iso: string) {
+  try {
+    return new Date(iso).toLocaleString('id-ID', {
+      timeZone: 'Asia/Jakarta',
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+  } catch {
+    return iso
+  }
+}
+
+function BadgeBayar({ booking }: { booking: Booking }) {
+  if (booking.status === 'dibatalkan') return null
+  const { sisa, lunas } = infoBayar(booking)
+  return lunas ? (
+    <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-800 bg-emerald-50 px-1.5 py-0.5 rounded-full border border-emerald-200">
+      <BadgeCheck className="w-3 h-3" /> Lunas
+    </span>
+  ) : (
+    <span className="inline-flex items-center text-[10px] font-semibold text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded-full border border-rose-200">
+      Sisa {formatRupiah(sisa)}
+    </span>
+  )
+}
+
 interface BookingRowProps {
   booking: Booking
+  riwayat: RiwayatPembayaran[]
+  onOpenPembayaran: (booking: Booking, mode: ModePembayaran) => void
   adminEmail: string
   onRefresh: () => void
   onOpenReschedule: (booking: Booking) => void
@@ -56,6 +105,8 @@ interface BookingRowProps {
 
 function BookingRow({
   booking,
+  riwayat,
+  onOpenPembayaran,
   adminEmail,
   onRefresh,
   onOpenReschedule,
@@ -78,6 +129,18 @@ function BookingRow({
   const hasCetak = hasCetakPaket || hasCetakAddon
 
   const handleStatus = (newStatus: BookingStatus) => {
+    // Tandai selesai = sisa tagihan otomatis dicatat lunas; minta konfirmasi dulu
+    if (newStatus === 'selesai') {
+      const { sisa } = infoBayar(booking)
+      if (sisa > 0) {
+        const ok = window.confirm(
+          `Tandai sesi ${booking.nama_klien} selesai?\n\n` +
+            `Sisa tagihan ${formatRupiah(sisa)} akan otomatis dicatat LUNAS.\n` +
+            `Jika client belum benar-benar membayar, batalkan lalu catat pembayarannya dulu.`
+        )
+        if (!ok) return
+      }
+    }
     startTransition(async () => {
       try {
         const res = await updateBookingStatus(booking.id, newStatus, undefined, adminEmail)
@@ -222,9 +285,10 @@ function BookingRow({
               <p className="font-heading font-semibold text-sm sm:text-base text-[rgb(var(--color-forest))]">
                 {formatRupiah(booking.total_harga)}
               </p>
-              <p className="text-[11px] text-[rgb(var(--color-text-muted))]">
-                DP {formatRupiah(booking.dp_dibayar)}
+              <p className="text-[11px] text-[rgb(var(--color-text-muted))] mb-0.5">
+                Dibayar {formatRupiah(booking.dp_dibayar)}
               </p>
+              <BadgeBayar booking={booking} />
             </div>
             <div className="w-6 h-6 rounded-md flex items-center justify-center text-[rgb(var(--color-text-muted))] hover:text-[rgb(var(--color-text))]">
               {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
@@ -295,6 +359,106 @@ function BookingRow({
                 </button>
               </ClientCardField>
             )}
+
+            {/* ── Section Pembayaran (DP + cicilan + pelunasan) ── */}
+            {(() => {
+              const { total, dibayar, sisa, lunas } = infoBayar(booking)
+              const persen = total > 0 ? Math.min(100, Math.round((dibayar / total) * 100)) : 100
+              const bisaBayar = booking.status !== 'dibatalkan' && sisa > 0
+              // DP awal = nilai "dibayar" sebelum catatan pembayaran pertama
+              const dpAwal = riwayat.length > 0
+                ? (riwayat[0].catatan.match(/dibayar (.+?) →/)?.[1] ?? null)
+                : formatRupiah(dibayar)
+              return (
+                <div className="sm:col-span-2 rounded-lg border border-[rgb(var(--color-border))] bg-[rgb(var(--color-cream-dark)/0.2)] p-2.5 sm:p-3">
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <span className="text-xs font-semibold text-[rgb(var(--color-text))] flex items-center gap-1.5">
+                      <Wallet className="w-3.5 h-3.5 text-[rgb(var(--color-forest))]" />
+                      Pembayaran
+                    </span>
+                    <BadgeBayar booking={booking} />
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2 text-center mb-2">
+                    <div>
+                      <p className="text-[10px] text-[rgb(var(--color-text-muted))]">Total</p>
+                      <p className="font-heading font-semibold text-xs sm:text-sm">{formatRupiah(total)}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-[rgb(var(--color-text-muted))]">Sudah Dibayar</p>
+                      <p className="font-heading font-semibold text-xs sm:text-sm text-emerald-700">{formatRupiah(dibayar)}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] text-[rgb(var(--color-text-muted))]">{sisa < 0 ? 'Lebih Bayar' : 'Sisa'}</p>
+                      <p className={cn('font-heading font-semibold text-xs sm:text-sm', lunas ? 'text-emerald-700' : 'text-rose-700')}>
+                        {formatRupiah(Math.abs(sisa))}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="h-1.5 rounded-full bg-[rgb(var(--color-border))] overflow-hidden mb-2.5" aria-hidden>
+                    <div
+                      className={cn('h-full rounded-full transition-all', lunas ? 'bg-emerald-500' : 'bg-amber-500')}
+                      style={{ width: `${persen}%` }}
+                    />
+                  </div>
+
+                  {/* Riwayat */}
+                  <ul className="space-y-1 mb-2.5">
+                    {dpAwal && (
+                      <li className="text-[11px] text-[rgb(var(--color-text-muted))] flex justify-between gap-2">
+                        <span>DP saat booking</span>
+                        <span className="font-medium text-[rgb(var(--color-text))]">{dpAwal}</span>
+                      </li>
+                    )}
+                    {riwayat.map((r, i) => (
+                      <li
+                        key={i}
+                        className="text-[11px] leading-snug px-2 py-1.5 rounded-md bg-[rgb(var(--color-surface))] border border-[rgb(var(--color-border)/0.6)]"
+                      >
+                        <span className="text-[rgb(var(--color-text))]">{r.catatan}</span>
+                        <span className="block text-[10px] text-[rgb(var(--color-text-muted))] mt-0.5">
+                          {formatWaktuLog(r.created_at)} WIB{r.oleh ? ` · ${r.oleh}` : ''}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+
+                  <div className="flex flex-wrap gap-2">
+                    {bisaBayar && (
+                      <>
+                        <Button
+                          size="sm"
+                          onClick={() => onOpenPembayaran(booking, 'lunasi')}
+                          className="rounded-lg h-9 min-h-[36px] text-xs font-semibold flex-1 sm:flex-none"
+                        >
+                          <BadgeCheck className="w-3.5 h-3.5" />
+                          Lunasi {formatRupiah(sisa)}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => onOpenPembayaran(booking, 'cicil')}
+                          className="rounded-lg h-9 min-h-[36px] text-xs border border-[rgb(var(--color-forest)/0.4)] text-[rgb(var(--color-forest))] flex-1 sm:flex-none"
+                        >
+                          <Wallet className="w-3.5 h-3.5" />
+                          Catat Cicilan
+                        </Button>
+                      </>
+                    )}
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => onOpenPembayaran(booking, 'koreksi')}
+                      className="rounded-lg h-9 min-h-[36px] text-xs border border-[rgb(var(--color-border))] text-[rgb(var(--color-text-muted))] flex-1 sm:flex-none"
+                    >
+                      <PencilLine className="w-3.5 h-3.5" />
+                      Koreksi
+                    </Button>
+                  </div>
+                </div>
+              )
+            })()}
 
             {/* ── Section Rincian Add-on (termasuk Add-on Lapangan) ── */}
             {booking.booking_addons && booking.booking_addons.length > 0 && (
@@ -544,6 +708,7 @@ interface BookingsClientProps {
   closedDates?: ClosedDateItem[]
   namaStudio?: string
   adminEmail: string
+  riwayatPembayaran?: Record<string, RiwayatPembayaran[]>
 }
 
 export function BookingsClient({
@@ -557,11 +722,14 @@ export function BookingsClient({
   closedDates = [],
   namaStudio,
   adminEmail,
+  riwayatPembayaran = {},
 }: BookingsClientProps) {
   const [search, setSearch] = useState('')
   const [filterStatus, setFilterStatus] = useState<BookingStatus | 'all'>('all')
   const [filterCetak, setFilterCetak] = useState<CetakStatus | 'all' | 'ada_cetak'>('all')
   const [filterTanggal, setFilterTanggal] = useState('')
+  const [filterBayar, setFilterBayar] = useState<'all' | 'belum_lunas' | 'lunas'>('all')
+  const [pembayaranTarget, setPembayaranTarget] = useState<{ booking: Booking; mode: ModePembayaran } | null>(null)
   const [showCalendarView, setShowCalendarView] = useState(false)
   const [rescheduleTarget, setRescheduleTarget] = useState<Booking | null>(null)
   const [whatsAppTarget, setWhatsAppTarget] = useState<Booking | null>(null)
@@ -601,8 +769,31 @@ export function BookingsClient({
       matchCetak = hasCetak && (b.status_cetak || 'menunggu') === filterCetak
     }
 
-    return matchSearch && matchStatus && matchTanggal && matchCetak
+    // Filter Pembayaran (booking dibatalkan tidak dihitung tagihan)
+    let matchBayar = true
+    if (filterBayar !== 'all') {
+      const aktif = b.status !== 'dibatalkan'
+      const { lunas } = infoBayar(b)
+      matchBayar = aktif && (filterBayar === 'lunas' ? lunas : !lunas)
+    }
+
+    return matchSearch && matchStatus && matchTanggal && matchCetak && matchBayar
   })
+
+  // Ringkasan tagihan: semua booking aktif yang belum lunas
+  const ringkasanTagihan = useMemo(() => {
+    let jumlah = 0
+    let totalSisa = 0
+    for (const b of initialBookings) {
+      if (b.status === 'dibatalkan') continue
+      const { sisa } = infoBayar(b)
+      if (sisa > 0) {
+        jumlah += 1
+        totalSisa += sisa
+      }
+    }
+    return { jumlah, totalSisa }
+  }, [initialBookings])
 
   // Booking untuk tanggal aktif terpilih atau hari ini
   // Hari ini menurut WIB (bukan UTC), supaya jam 00:00–06:59 tidak salah tanggal
@@ -642,6 +833,19 @@ export function BookingsClient({
           booking={whatsAppTarget}
           namaStudio={namaStudio}
           onClose={() => setWhatsAppTarget(null)}
+        />
+      )}
+
+      {/* Catat Pembayaran / Pelunasan / Koreksi */}
+      {pembayaranTarget && (
+        <PembayaranModal
+          booking={pembayaranTarget.booking}
+          mode={pembayaranTarget.mode}
+          onClose={() => setPembayaranTarget(null)}
+          onSuccess={() => {
+            setPembayaranTarget(null)
+            router.refresh()
+          }}
         />
       )}
 
@@ -706,6 +910,17 @@ export function BookingsClient({
             <option value="menunggu">Cetak: Belum</option>
             <option value="proses">Cetak: Proses</option>
             <option value="selesai">Cetak: Selesai</option>
+          </select>
+
+          {/* Filter Pembayaran */}
+          <select
+            value={filterBayar}
+            onChange={e => setFilterBayar(e.target.value as 'all' | 'belum_lunas' | 'lunas')}
+            className="h-9 px-2.5 rounded-lg border border-[rgb(var(--color-border))] bg-[rgb(var(--color-surface))] text-xs font-medium focus:outline-none focus:border-[rgb(var(--color-forest))] shrink-0"
+          >
+            <option value="all">Semua Pembayaran</option>
+            <option value="belum_lunas">Belum Lunas</option>
+            <option value="lunas">Lunas</option>
           </select>
 
           {/* Toggle Kalender Button */}
@@ -822,6 +1037,40 @@ export function BookingsClient({
         </div>
       )}
 
+      {/* ── Ringkasan Tagihan ── */}
+      {ringkasanTagihan.jumlah > 0 && (
+        <button
+          type="button"
+          onClick={() => setFilterBayar(f => (f === 'belum_lunas' ? 'all' : 'belum_lunas'))}
+          className={cn(
+            'w-full mb-4 p-3 rounded-xl border text-left flex items-center justify-between gap-3 transition-colors',
+            filterBayar === 'belum_lunas'
+              ? 'bg-rose-50 border-rose-300'
+              : 'bg-[rgb(var(--color-surface))] border-[rgb(var(--color-border))] hover:border-rose-300'
+          )}
+        >
+          <span className="flex items-center gap-2.5">
+            <span className="w-8 h-8 rounded-lg bg-rose-100 text-rose-700 flex items-center justify-center shrink-0">
+              <Wallet className="w-4 h-4" />
+            </span>
+            <span>
+              <span className="block font-heading font-semibold text-xs sm:text-sm text-[rgb(var(--color-text))]">
+                {ringkasanTagihan.jumlah} booking belum lunas
+              </span>
+              <span className="block text-[11px] text-[rgb(var(--color-text-muted))]">
+                {filterBayar === 'belum_lunas' ? 'Klik untuk tampilkan semua' : 'Klik untuk tampilkan daftarnya'}
+              </span>
+            </span>
+          </span>
+          <span className="text-right shrink-0">
+            <span className="block text-[10px] text-[rgb(var(--color-text-muted))]">Total sisa tagihan</span>
+            <span className="block font-heading font-bold text-sm sm:text-base text-rose-700">
+              {formatRupiah(ringkasanTagihan.totalSisa)}
+            </span>
+          </span>
+        </button>
+      )}
+
       {/* ── Booking List ── */}
       <div className="flex flex-col gap-2.5">
         <div className="flex items-center justify-between px-1 text-xs text-[rgb(var(--color-text-muted))] font-normal">
@@ -853,6 +1102,8 @@ export function BookingsClient({
             <BookingRow
               key={b.id}
               booking={b}
+              riwayat={riwayatPembayaran[b.id] || []}
+              onOpenPembayaran={(item, mode) => setPembayaranTarget({ booking: item, mode })}
               adminEmail={adminEmail}
               onRefresh={() => router.refresh()}
               onOpenReschedule={item => setRescheduleTarget(item)}

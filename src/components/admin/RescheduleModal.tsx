@@ -314,7 +314,7 @@ export function RescheduleModal({
               </div>
               <div className="flex items-center justify-between pt-1 border-t border-[rgb(var(--color-border))]">
                 <span className="text-[rgb(var(--color-text-muted))]">
-                  DP Masuk: {formatRupiah(booking.dp_dibayar)} ➔ Sisa Pelunasan:
+                  Sudah Dibayar: {formatRupiah(booking.dp_dibayar)} ➔ Sisa Pelunasan:
                 </span>
                 <span className="font-heading font-black text-[rgb(var(--color-text))]">
                   {formatRupiah(newSisaPelunasan)}
