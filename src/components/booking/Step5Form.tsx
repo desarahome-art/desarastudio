@@ -8,7 +8,7 @@ import { formatRupiah } from '@/lib/utils'
 import { getMenitPerUnit, labelSatuanWaktu } from '@/lib/addon-calc'
 import { normalisasiBackgrounds, kuotaBackgroundEfektif } from '@/lib/background'
 import { getAvailableSlots } from '@/app/actions'
-import { Minus, Plus, ArrowRight, ShieldCheck, X } from 'lucide-react'
+import { Minus, Plus, ArrowRight, ShieldCheck, X, AlertTriangle } from 'lucide-react'
 import { BackgroundSelector } from './BackgroundSelector'
 import { ModernDatePicker } from './ModernDatePicker'
 import { TimeSlotSelector } from './TimeSlotSelector'
@@ -113,6 +113,8 @@ export function Step5Form({
   jamRef.current = jam
   const [availableSlots, setAvailableSlots] = useState<string[]>([])
   const [loadingSlots, setLoadingSlots] = useState(false)
+  // Jam yang tadinya terpilih tapi ternyata tidak tersedia lagi (untuk pesan ke klien)
+  const [jamTidakTersedia, setJamTidakTersedia] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
 
   // Hitung durasi total dan kuota background dari paket + add-on
@@ -156,6 +158,7 @@ export function Step5Form({
       const safe = Array.isArray(slots) ? slots : []
       setAvailableSlots(safe)
       if (jamRef.current && !safe.includes(jamRef.current)) {
+        setJamTidakTersedia(jamRef.current)
         setJam('')
       }
     } catch (err) {
@@ -183,11 +186,13 @@ export function Step5Form({
   const handleDateChange = (newDate: string) => {
     setTanggal(newDate)
     setJam('')
+    setJamTidakTersedia('')
     setErrors(prev => ({ ...prev, tanggal: '' }))
   }
 
   const handleSlotSelect = (newSlot: string) => {
     setJam(newSlot)
+    setJamTidakTersedia('')
     setErrors(prev => ({ ...prev, jam: '' }))
   }
 
@@ -277,6 +282,18 @@ export function Step5Form({
 
         {/* 3. PILIHAN JAM MULAI (TERKELOMPOK MODERN) */}
         <section className="p-4 sm:p-5 rounded-3xl bg-[rgb(var(--color-surface))] border-2 border-[rgb(var(--color-border))] shadow-sm">
+          {jamTidakTersedia && !jam && (
+            <div
+              role="alert"
+              className="mb-4 flex items-start gap-2 rounded-2xl border-2 border-amber-300 bg-amber-50 px-4 py-3 text-xs sm:text-sm text-amber-900"
+            >
+              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" />
+              <span>
+                Jam <strong>{jamTidakTersedia}</strong> tidak tersedia untuk sesi {durasiTotal} menit
+                (sudah dipesan, sudah lewat, atau melewati jam tutup studio). Silakan pilih jam lain.
+              </span>
+            </div>
+          )}
           <TimeSlotSelector
             slots={availableSlots}
             selectedSlot={jam}

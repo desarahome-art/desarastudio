@@ -3,7 +3,7 @@
 import Image from 'next/image'
 import { motion } from 'framer-motion'
 import { Button } from '@/components/ui/Button'
-import { Clock, ArrowRight, Sparkles } from 'lucide-react'
+import { Clock, ArrowRight, Sparkles, CalendarSearch } from 'lucide-react'
 import type { Settings } from '@/types'
 
 interface Step1WelcomeProps {
@@ -11,9 +11,10 @@ interface Step1WelcomeProps {
   onNext: () => void
   onWaitingList: () => void
   onPricelist: () => void
+  onCekJadwal: () => void
 }
 
-export function Step1Welcome({ settings, onNext, onWaitingList, onPricelist }: Step1WelcomeProps) {
+export function Step1Welcome({ settings, onNext, onWaitingList, onPricelist, onCekJadwal }: Step1WelcomeProps) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 24 }}
@@ -89,6 +90,16 @@ export function Step1Welcome({ settings, onNext, onWaitingList, onPricelist }: S
         >
           Mulai Booking
           <ArrowRight className="w-5 h-5 transition-transform group-hover:translate-x-1" />
+        </Button>
+
+        <Button
+          onClick={onCekJadwal}
+          variant="ghost"
+          size="lg"
+          className="w-full bg-[rgb(var(--color-surface))] flex items-center justify-center gap-2"
+        >
+          <CalendarSearch className="w-4 h-4 text-[rgb(var(--color-forest))]" />
+          Cek Jadwal Kosong
         </Button>
 
         <Button

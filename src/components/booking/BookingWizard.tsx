@@ -11,6 +11,7 @@ import { Step6Pembayaran } from './Step6Pembayaran'
 import { Step7Sukses } from './Step7Sukses'
 import { WaitingListModal } from './WaitingListModal'
 import { PricelistModal } from './PricelistModal'
+import { CekJadwalModal } from './CekJadwalModal'
 import { submitBooking } from '@/app/actions'
 import { backgroundsUntukKategori } from '@/lib/background'
 import type {
@@ -40,6 +41,7 @@ export function BookingWizard({
   const [step, setStep] = useState<Step>(1)
   const [showWaiting, setShowWaiting] = useState(false)
   const [showPricelist, setShowPricelist] = useState(false)
+  const [showCekJadwal, setShowCekJadwal] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -87,6 +89,20 @@ export function BookingWizard({
       goTo(5)
     } else {
       goTo(2)
+    }
+  }
+
+  // Dari modal "Cek Jadwal Kosong": simpan tanggal & jam, lalu lanjut ke langkah yang belum diisi.
+  // Jam akan dicek ulang di Step 5 sesuai durasi paket yang dipilih.
+  const handlePilihJadwalDariCek = (tanggal: string, jam: string) => {
+    setFormData(prev => ({ ...prev, tanggal, jam_mulai: jam }))
+    setShowCekJadwal(false)
+    if (!nama.trim()) {
+      goTo(2)
+    } else if (category && pkg) {
+      goTo(5)
+    } else {
+      goTo(3)
     }
   }
 
@@ -191,6 +207,7 @@ export function BookingWizard({
             onNext={() => goTo(2)}
             onWaitingList={() => setShowWaiting(true)}
             onPricelist={() => setShowPricelist(true)}
+            onCekJadwal={() => setShowCekJadwal(true)}
           />
         )}
         {step === 2 && (
@@ -283,6 +300,18 @@ export function BookingWizard({
               setShowPricelist(false)
               goTo(2)
             }}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Cek jadwal kosong modal */}
+      <AnimatePresence>
+        {showCekJadwal && (
+          <CekJadwalModal
+            settings={settings}
+            packages={packages}
+            onClose={() => setShowCekJadwal(false)}
+            onPilihJadwal={handlePilihJadwalDariCek}
           />
         )}
       </AnimatePresence>

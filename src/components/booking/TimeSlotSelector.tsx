@@ -12,6 +12,12 @@ interface TimeSlotSelectorProps {
   loading: boolean
   onSelect: (slot: string) => void
   error?: string
+  /** Judul di atas daftar jam (default: "Pilih Jam Mulai") */
+  judul?: string
+  /** Teks kecil di bawah judul; default menampilkan durasi total sesi */
+  keterangan?: React.ReactNode
+  /** Tampilkan jam selesai (s/d ...) di tiap slot. Default true */
+  tampilkanJamSelesai?: boolean
 }
 
 export function TimeSlotSelector({
@@ -22,6 +28,9 @@ export function TimeSlotSelector({
   loading,
   onSelect,
   error,
+  judul = 'Pilih Jam Mulai',
+  keterangan,
+  tampilkanJamSelesai = true,
 }: TimeSlotSelectorProps) {
   // Hitung jam selesai
   const getEndTime = (start: string) => {
@@ -70,14 +79,16 @@ export function TimeSlotSelector({
       <div className="flex items-center justify-between">
         <div>
           <label className="text-sm font-heading font-semibold text-[rgb(var(--color-text))]">
-            Pilih Jam Mulai
+            {judul}
           </label>
           <p className="text-xs text-[rgb(var(--color-text-muted))]">
-            Durasi total sesi: <span className="font-semibold text-[rgb(var(--color-text))]">{durasiTotal} menit</span>
+            {keterangan ?? (
+              <>Durasi total sesi: <span className="font-semibold text-[rgb(var(--color-text))]">{durasiTotal} menit</span></>
+            )}
           </p>
         </div>
 
-        {selectedSlot && (
+        {selectedSlot && tampilkanJamSelesai && (
           <span className="text-xs font-heading font-bold text-[rgb(var(--color-forest))] bg-[rgb(var(--color-forest)/0.1)] px-3 py-1 rounded-full flex items-center gap-1.5 border border-[rgb(var(--color-forest)/0.2)]">
             <Clock className="w-3.5 h-3.5" />
             {selectedSlot} – {getEndTime(selectedSlot)} WIB
@@ -143,13 +154,15 @@ export function TimeSlotSelector({
                           <span className="font-heading text-sm sm:text-base leading-tight">
                             {slot}
                           </span>
-                          <span
-                            className={`text-[10px] mt-0.5 ${
-                              isSelected ? 'text-white/80' : 'text-[rgb(var(--color-text-muted))]'
-                            }`}
-                          >
-                            s/d {endTime}
-                          </span>
+                          {tampilkanJamSelesai && (
+                            <span
+                              className={`text-[10px] mt-0.5 ${
+                                isSelected ? 'text-white/80' : 'text-[rgb(var(--color-text-muted))]'
+                              }`}
+                            >
+                              s/d {endTime}
+                            </span>
+                          )}
 
                           {isSelected && (
                             <div className="absolute top-1 right-1 w-3.5 h-3.5 rounded-full bg-[rgb(var(--color-blitz))] flex items-center justify-center">
@@ -167,7 +180,7 @@ export function TimeSlotSelector({
         )}
 
         {/* Info ringkasan slot terpilih */}
-        {selectedSlot && (
+        {selectedSlot && tampilkanJamSelesai && (
           <div className="mt-4 pt-3 border-t border-[rgb(var(--color-border))] flex items-center justify-between text-xs text-[rgb(var(--color-text))]">
             <span className="text-[rgb(var(--color-text-muted))]">Estimasi Waktu:</span>
             <span className="font-heading font-semibold text-[rgb(var(--color-forest))]">
