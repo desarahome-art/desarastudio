@@ -10,7 +10,7 @@ export default async function LaporanPage() {
   // Ambil 2 tahun terakhir saja agar halaman tetap ringan
   const mulai = tambahHariWIB(-730)
 
-  const [{ data: bookings }, { data: pengeluaran }] = await Promise.all([
+  const [{ data: bookings, error: errBooking }, { data: pengeluaran, error: errPengeluaran }] = await Promise.all([
     supabase
       .from('bookings')
       .select('id, kode, nama_klien, tanggal, jam_mulai, status, total_harga, category_nama, package_nama, booking_addons(jenis, harga, jumlah, total)')
@@ -24,6 +24,11 @@ export default async function LaporanPage() {
       .order('tanggal', { ascending: false }),
   ])
 
+  // Jangan diam-diam tampil kosong: tampilkan penyebab bila salah satu query gagal
+  const galat: string[] = []
+  if (errBooking) galat.push(`Data booking gagal dimuat: ${errBooking.message}`)
+  if (errPengeluaran) galat.push(`Data pengeluaran gagal dimuat: ${errPengeluaran.message}`)
+
   return (
     <div>
       <h1 className="font-heading text-2xl font-bold mb-6">Laporan Keuangan</h1>
@@ -31,6 +36,7 @@ export default async function LaporanPage() {
         bookings={((bookings || []) as unknown as BookingLaporan[]).map(b => ({ ...b, jam_mulai: normalizeTime(b.jam_mulai) }))}
         pengeluaran={(pengeluaran || []) as PengeluaranLaporan[]}
         hariIni={hariIniWIB()}
+        galat={galat}
       />
     </div>
   )

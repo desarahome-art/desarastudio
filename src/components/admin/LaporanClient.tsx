@@ -116,10 +116,12 @@ export function LaporanClient({
   bookings,
   pengeluaran,
   hariIni,
+  galat = [],
 }: {
   bookings: BookingLaporan[]
   pengeluaran: PengeluaranLaporan[]
   hariIni: string
+  galat?: string[]
 }) {
   const router = useRouter()
   const [tab, setTab] = useState<Tab>('harian')
@@ -191,6 +193,12 @@ export function LaporanClient({
 
   return (
     <div className="max-w-3xl">
+      {galat.length > 0 && (
+        <div role="alert" className="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800 print:hidden">
+          {galat.map(g => <p key={g}>{g}</p>)}
+          <p className="text-xs mt-1">Laporan di bawah belum lengkap. Muat ulang halaman; bila pesan ini tetap muncul, kirim pesan di atas ke saya.</p>
+        </div>
+      )}
       <div className="flex gap-1 p-1 rounded-xl bg-[rgb(var(--color-cream-dark)/0.6)] mb-4 print:hidden" role="tablist">
         {([['harian', 'Harian'], ['bulanan', 'Bulanan'], ['pengeluaran', 'Pengeluaran']] as [Tab, string][]).map(([k, n]) => (
           <button
