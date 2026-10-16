@@ -16,6 +16,7 @@ import {
   formatJamValid,
   formatRupiah,
 } from '@/lib/utils'
+import { KATEGORI_PENGELUARAN } from '@/lib/laporan'
 import { backgroundsUntukKategori, kuotaBackgroundEfektif } from '@/lib/background'
 import {
   getMenitPerUnit,
@@ -1686,5 +1687,53 @@ export async function koreksiPembayaran(
   if (logError) console.error('Gagal menulis log koreksi pembayaran:', logError.message)
 
   revalidatePath('/admin/bookings')
+  return { success: true }
+}
+
+// ============================================================
+// PENGELUARAN (menu Laporan) — pengeluaran manual dari admin.
+// Biaya cetak foto tidak dicatat di sini; dihitung otomatis dari booking selesai.
+// ============================================================
+export async function tambahPengeluaran(data: {
+  tanggal: string
+  kategori: string
+  keterangan: string
+  jumlah: number
+}): Promise<{ error?: string; success?: boolean }> {
+  const auth = await requireAdmin()
+  if ('error' in auth) return { error: auth.error }
+
+  if (!formatTanggalValid(data.tanggal)) return { error: 'Tanggal tidak valid.' }
+  if (!(KATEGORI_PENGELUARAN as readonly string[]).includes(data.kategori)) {
+    return { error: 'Kategori tidak valid.' }
+  }
+  const keterangan = (data.keterangan || '').trim().slice(0, 200)
+  if (!keterangan) return { error: 'Isi keterangan pengeluaran.' }
+  if (!nominalValid(data.jumlah) || data.jumlah <= 0) return { error: 'Jumlah harus lebih dari nol.' }
+
+  const supabase = await createAdminClient()
+  const { error } = await supabase.from('pengeluaran').insert({
+    tanggal: data.tanggal,
+    kategori: data.kategori,
+    keterangan,
+    jumlah: data.jumlah,
+    dibuat_oleh: auth.email,
+  })
+  if (error) return { error: error.message }
+
+  revalidatePath('/admin/laporan')
+  return { success: true }
+}
+
+export async function hapusPengeluaran(id: string): Promise<{ error?: string; success?: boolean }> {
+  const auth = await requireAdmin()
+  if ('error' in auth) return { error: auth.error }
+  if (typeof id !== 'string' || !id) return { error: 'ID tidak valid.' }
+
+  const supabase = await createAdminClient()
+  const { error } = await supabase.from('pengeluaran').delete().eq('id', id)
+  if (error) return { error: error.message }
+
+  revalidatePath('/admin/laporan')
   return { success: true }
 }

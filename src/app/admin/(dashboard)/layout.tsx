@@ -17,7 +17,7 @@ export default async function DashboardLayout({
   return (
     <div className="min-h-screen flex flex-col lg:flex-row bg-[rgb(var(--color-cream))]">
       <AdminNav userEmail={user.email || ''} />
-      <main className="flex-1 lg:ml-64 p-4 sm:p-6 lg:p-8 min-h-screen">
+      <main className="flex-1 lg:ml-64 print:!ml-0 print:!p-0 p-4 sm:p-6 lg:p-8 min-h-screen">
         {children}
       </main>
     </div>

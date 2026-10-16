@@ -6,13 +6,14 @@ import { usePathname, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import {
   Calendar, Clock, ListOrdered, Package, Settings,
-  LogOut, X, Menu
+  LogOut, X, Menu, BarChart3
 } from 'lucide-react'
 import { useState } from 'react'
 import { cn } from '@/lib/utils'
 
 const navItems = [
   { href: '/admin/bookings',     label: 'Booking',      icon: Calendar },
+  { href: '/admin/laporan',      label: 'Laporan',      icon: BarChart3 },
   { href: '/admin/waitinglist',  label: 'Waiting List', icon: Clock },
   { href: '/admin/packages',     label: 'Paket',        icon: Package },
   { href: '/admin/addons',       label: 'Add-on',       icon: ListOrdered },
@@ -90,12 +91,12 @@ export function AdminNav({ userEmail }: { userEmail: string }) {
   return (
     <>
       {/* Desktop sidebar */}
-      <aside className="hidden lg:flex fixed left-0 top-0 bottom-0 w-64 flex-col bg-[rgb(var(--color-surface))] border-r border-[rgb(var(--color-border))] p-4">
+      <aside className="hidden lg:flex print:!hidden fixed left-0 top-0 bottom-0 w-64 flex-col bg-[rgb(var(--color-surface))] border-r border-[rgb(var(--color-border))] p-4">
         <SidebarContent />
       </aside>
 
       {/* Mobile top bar */}
-      <div className="lg:hidden fixed top-0 left-0 right-0 z-40 bg-[rgb(var(--color-surface))] border-b border-[rgb(var(--color-border))] px-4 py-3 flex items-center justify-between">
+      <div className="lg:hidden print:hidden fixed top-0 left-0 right-0 z-40 bg-[rgb(var(--color-surface))] border-b border-[rgb(var(--color-border))] px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-lg overflow-hidden bg-white border border-[rgb(var(--color-border))] flex items-center justify-center p-0.5 flex-shrink-0">
             <Image
@@ -130,7 +131,7 @@ export function AdminNav({ userEmail }: { userEmail: string }) {
       )}
 
       {/* Mobile top padding spacer */}
-      <div className="lg:hidden h-14" />
+      <div className="lg:hidden print:hidden h-14" />
     </>
   )
 }
