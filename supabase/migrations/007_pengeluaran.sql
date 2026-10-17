@@ -1,8 +1,8 @@
 -- ============================================================
 -- 007 — Tabel pengeluaran (untuk menu Laporan keuangan)
 -- Aman dijalankan berulang (idempotent). Jalankan di Supabase > SQL Editor.
--- Biaya cetak foto TIDAK dicatat di sini: dihitung otomatis dari booking_addons (jenis 'cetak')
--- pada booking berstatus selesai. Tabel ini hanya untuk pengeluaran manual dari admin.
+-- Semua pengeluaran diisi manual oleh admin (termasuk biaya cetak foto, kategori "Cetak foto").
+-- Pasangannya: tabel pemasukan (migrasi 008).
 -- ============================================================
 
 CREATE TABLE IF NOT EXISTS pengeluaran (

@@ -16,7 +16,7 @@ import {
   formatJamValid,
   formatRupiah,
 } from '@/lib/utils'
-import { KATEGORI_PENGELUARAN } from '@/lib/laporan'
+import { KATEGORI_PENGELUARAN, JENIS_PEMASUKAN } from '@/lib/laporan'
 import { backgroundsUntukKategori, kuotaBackgroundEfektif } from '@/lib/background'
 import {
   getMenitPerUnit,
@@ -1691,41 +1691,120 @@ export async function koreksiPembayaran(
 }
 
 // ============================================================
-// PENGELUARAN (menu Laporan) — pengeluaran manual dari admin.
-// Biaya cetak foto tidak dicatat di sini; dihitung otomatis dari booking selesai.
+// LAPORAN KEUANGAN SERBA MANUAL — pemasukan & pengeluaran diisi admin per tanggal.
+// Booking tidak ikut dihitung di laporan.
 // ============================================================
-export async function tambahPengeluaran(data: {
+type HasilAksi = { error?: string; success?: boolean }
+
+interface PemasukanInput { jenis: string; nama: string; jumlah: number; harga_satuan: number }
+interface PengeluaranInput { kategori: string; keterangan: string; jumlah: number }
+
+function cekPemasukan(p: PemasukanInput): { error: string } | { data: PemasukanInput } {
+  const nama = (p.nama || '').trim().slice(0, 100)
+  if (!(JENIS_PEMASUKAN as readonly string[]).includes(p.jenis)) return { error: 'Jenis pemasukan tidak valid.' }
+  if (!nama) return { error: 'Isi nama pada setiap baris pemasukan.' }
+  if (!Number.isInteger(p.jumlah) || p.jumlah < 1 || p.jumlah > 10000) return { error: `Jumlah "${nama}" tidak valid.` }
+  if (!nominalValid(p.harga_satuan)) return { error: `Harga "${nama}" tidak valid.` }
+  return { data: { jenis: p.jenis, nama, jumlah: p.jumlah, harga_satuan: p.harga_satuan } }
+}
+
+function cekPengeluaran(p: PengeluaranInput): { error: string } | { data: PengeluaranInput } {
+  const keterangan = (p.keterangan || '').trim().slice(0, 200)
+  if (!(KATEGORI_PENGELUARAN as readonly string[]).includes(p.kategori)) return { error: 'Kategori pengeluaran tidak valid.' }
+  if (!keterangan) return { error: 'Isi keterangan pada setiap pengeluaran.' }
+  if (!nominalValid(p.jumlah) || p.jumlah <= 0) return { error: `Jumlah pengeluaran "${keterangan}" harus lebih dari nol.` }
+  return { data: { kategori: p.kategori, keterangan, jumlah: p.jumlah } }
+}
+
+/** Simpan input harian: beberapa baris pemasukan dan pengeluaran pada satu tanggal. */
+export async function simpanInputHarian(data: {
   tanggal: string
-  kategori: string
-  keterangan: string
-  jumlah: number
-}): Promise<{ error?: string; success?: boolean }> {
+  pemasukan: PemasukanInput[]
+  pengeluaran: PengeluaranInput[]
+}): Promise<HasilAksi> {
   const auth = await requireAdmin()
   if ('error' in auth) return { error: auth.error }
-
   if (!formatTanggalValid(data.tanggal)) return { error: 'Tanggal tidak valid.' }
-  if (!(KATEGORI_PENGELUARAN as readonly string[]).includes(data.kategori)) {
-    return { error: 'Kategori tidak valid.' }
+
+  const masuk = data.pemasukan || []
+  const keluar = data.pengeluaran || []
+  if (masuk.length + keluar.length === 0) return { error: 'Isi minimal satu baris pemasukan atau pengeluaran.' }
+  if (masuk.length > 50 || keluar.length > 50) return { error: 'Terlalu banyak baris (maksimal 50).' }
+
+  const barisMasuk = []
+  for (const p of masuk) {
+    const c = cekPemasukan(p)
+    if ('error' in c) return { error: c.error }
+    barisMasuk.push({ ...c.data, tanggal: data.tanggal, dibuat_oleh: auth.email })
   }
-  const keterangan = (data.keterangan || '').trim().slice(0, 200)
-  if (!keterangan) return { error: 'Isi keterangan pengeluaran.' }
-  if (!nominalValid(data.jumlah) || data.jumlah <= 0) return { error: 'Jumlah harus lebih dari nol.' }
+  const barisKeluar = []
+  for (const p of keluar) {
+    const c = cekPengeluaran(p)
+    if ('error' in c) return { error: c.error }
+    barisKeluar.push({ ...c.data, tanggal: data.tanggal, dibuat_oleh: auth.email })
+  }
 
   const supabase = await createAdminClient()
-  const { error } = await supabase.from('pengeluaran').insert({
-    tanggal: data.tanggal,
-    kategori: data.kategori,
-    keterangan,
-    jumlah: data.jumlah,
-    dibuat_oleh: auth.email,
-  })
-  if (error) return { error: error.message }
+  let idMasuk: string[] = []
+  if (barisMasuk.length > 0) {
+    const { data: ins, error } = await supabase.from('pemasukan').insert(barisMasuk).select('id')
+    if (error) return { error: error.message }
+    idMasuk = (ins || []).map(r => r.id)
+  }
+  if (barisKeluar.length > 0) {
+    const { error } = await supabase.from('pengeluaran').insert(barisKeluar)
+    if (error) {
+      // batalkan pemasukan yang baru masuk agar tidak setengah tersimpan
+      if (idMasuk.length > 0) await supabase.from('pemasukan').delete().in('id', idMasuk)
+      return { error: error.message }
+    }
+  }
 
   revalidatePath('/admin/laporan')
   return { success: true }
 }
 
-export async function hapusPengeluaran(id: string): Promise<{ error?: string; success?: boolean }> {
+export async function ubahPemasukan(id: string, data: PemasukanInput): Promise<HasilAksi> {
+  const auth = await requireAdmin()
+  if ('error' in auth) return { error: auth.error }
+  if (typeof id !== 'string' || !id) return { error: 'ID tidak valid.' }
+  const c = cekPemasukan(data)
+  if ('error' in c) return { error: c.error }
+
+  const supabase = await createAdminClient()
+  const { error } = await supabase.from('pemasukan').update(c.data).eq('id', id)
+  if (error) return { error: error.message }
+  revalidatePath('/admin/laporan')
+  return { success: true }
+}
+
+export async function ubahPengeluaran(id: string, data: PengeluaranInput): Promise<HasilAksi> {
+  const auth = await requireAdmin()
+  if ('error' in auth) return { error: auth.error }
+  if (typeof id !== 'string' || !id) return { error: 'ID tidak valid.' }
+  const c = cekPengeluaran(data)
+  if ('error' in c) return { error: c.error }
+
+  const supabase = await createAdminClient()
+  const { error } = await supabase.from('pengeluaran').update(c.data).eq('id', id)
+  if (error) return { error: error.message }
+  revalidatePath('/admin/laporan')
+  return { success: true }
+}
+
+export async function hapusPemasukan(id: string): Promise<HasilAksi> {
+  const auth = await requireAdmin()
+  if ('error' in auth) return { error: auth.error }
+  if (typeof id !== 'string' || !id) return { error: 'ID tidak valid.' }
+
+  const supabase = await createAdminClient()
+  const { error } = await supabase.from('pemasukan').delete().eq('id', id)
+  if (error) return { error: error.message }
+  revalidatePath('/admin/laporan')
+  return { success: true }
+}
+
+export async function hapusPengeluaran(id: string): Promise<HasilAksi> {
   const auth = await requireAdmin()
   if ('error' in auth) return { error: auth.error }
   if (typeof id !== 'string' || !id) return { error: 'ID tidak valid.' }
@@ -1733,7 +1812,6 @@ export async function hapusPengeluaran(id: string): Promise<{ error?: string; su
   const supabase = await createAdminClient()
   const { error } = await supabase.from('pengeluaran').delete().eq('id', id)
   if (error) return { error: error.message }
-
   revalidatePath('/admin/laporan')
   return { success: true }
 }
