@@ -10,6 +10,7 @@ import {
   kurangiAddonLapangan,
 } from '@/app/actions'
 import { getMenitPerUnit } from '@/lib/addon-calc'
+import { hitungRekapBooking } from '@/lib/rekap-booking'
 import { linkAppWhatsApp, linkWebWhatsApp } from '@/lib/whatsapp'
 import { Button } from '@/components/ui/Button'
 import { AdminCalendarPicker } from './AdminCalendarPicker'
@@ -781,6 +782,13 @@ export function BookingsClient({
   })
 
   // Ringkasan tagihan: semua booking aktif yang belum lunas
+  // Rekap client & cetak: mengikuti daftar yang sedang tampil (tanggal, filter, pencarian)
+  const rekap = useMemo(() => {
+    const ukuranAddon: Record<string, string | null> = {}
+    for (const a of addons) ukuranAddon[a.id] = a.ukuran
+    return hitungRekapBooking(filtered, ukuranAddon)
+  }, [filtered, addons])
+
   const ringkasanTagihan = useMemo(() => {
     let jumlah = 0
     let totalSisa = 0
@@ -1070,6 +1078,47 @@ export function BookingsClient({
           </span>
         </button>
       )}
+
+      {/* ── Rekap Client & Cetak (mengikuti data yang tampil) ── */}
+      <div className="mb-4 p-3 rounded-xl border bg-[rgb(var(--color-surface))] border-[rgb(var(--color-border))]">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-[11px] text-[rgb(var(--color-text-muted))]">
+              Rekap {filterTanggal ? (filterTanggal === today ? 'Hari Ini' : filterTanggal) : 'Semua Tanggal'}
+            </p>
+            <p className="font-heading font-bold text-lg text-[rgb(var(--color-text))] leading-tight">
+              {rekap.client} <span className="text-xs font-semibold">client</span>
+            </p>
+          </div>
+          <div className="text-right">
+            <p className="text-[11px] text-[rgb(var(--color-text-muted))] flex items-center justify-end gap-1">
+              <Printer className="w-3.5 h-3.5" /> Total cetak
+            </p>
+            <p className="font-heading font-bold text-lg text-[rgb(var(--color-forest))] leading-tight">
+              {rekap.totalLembar} <span className="text-xs font-semibold">lembar</span>
+            </p>
+          </div>
+        </div>
+        {rekap.cetak.length > 0 ? (
+          <div className="mt-2.5 flex flex-wrap gap-1.5" data-testid="rekap-cetak">
+            {rekap.cetak.map(c => (
+              <span
+                key={c.ukuran}
+                className="px-2.5 py-1 rounded-lg bg-[rgb(var(--color-cream))] border border-[rgb(var(--color-border))] text-xs font-semibold text-[rgb(var(--color-text))]"
+              >
+                {c.ukuran} <span className="text-[rgb(var(--color-forest))]">× {c.lembar}</span>
+              </span>
+            ))}
+          </div>
+        ) : (
+          <p className="mt-2 text-xs text-[rgb(var(--color-text-muted))]">Tidak ada cetak</p>
+        )}
+        {rekap.dibatalkan > 0 && (
+          <p className="mt-2 text-[11px] text-[rgb(var(--color-text-muted))]">
+            {rekap.dibatalkan} booking dibatalkan tidak dihitung
+          </p>
+        )}
+      </div>
 
       {/* ── Booking List ── */}
       <div className="flex flex-col gap-2.5">
