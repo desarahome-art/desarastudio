@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/Button'
-import { formatRupiah } from '@/lib/utils'
+import { formatRupiah, tambahHariWIB } from '@/lib/utils'
 import {
   X,
   MessageCircle,
@@ -18,6 +18,9 @@ import {
 } from 'lucide-react'
 import type { Booking } from '@/types'
 import { linkAppWhatsApp, linkWebWhatsApp } from '@/lib/whatsapp'
+
+/** Lama link Google Drive hasil foto aktif sebelum file dihapus dari Drive studio */
+const MASA_AKTIF_LINK_HARI = 7
 
 export type WhatsAppTemplateType =
   | 'konfirmasi'
@@ -68,6 +71,8 @@ export function WhatsAppTemplateModal({
   }
 
   const tanggalFormatted = formatTanggalIndo(booking.tanggal)
+  // Batas link aktif dihitung dari hari pesan dikirim (WIB)
+  const batasLinkFormatted = formatTanggalIndo(tambahHariWIB(MASA_AKTIF_LINK_HARI))
 
   // Deskripsi rincian cetak foto
   const detailCetakList: string[] = []
@@ -170,7 +175,10 @@ export function WhatsAppTemplateModal({
           `🔗 *Link Hasil Foto:*`,
           `${linkDriveText}`,
           ``,
-          `Mohon untuk segera mendownload dan mem-backup foto-fotonya ya Kak.`,
+          `⚠️ *Penting:* Link ini hanya aktif *${MASA_AKTIF_LINK_HARI} hari* (sampai *${batasLinkFormatted}*). Setelah itu file akan dihapus dari Drive kami.`,
+          `Mohon segera download dan simpan foto-fotonya di galeri atau cloud pribadi ya Kak.`,
+          ``,
+          `Jika ada kendala saat membuka atau mendownload, langsung kabari kami di sini ya 🙏`,
           hasCetak
             ? `\nℹ️ *Catatan Cetakan:* Pesanan cetak foto kamu sedang kami proses dan akan kami kabari segera setelah selesai ya! 🖼️`
             : ``,
@@ -354,7 +362,8 @@ export function WhatsAppTemplateModal({
                   className="w-full px-3.5 py-2 rounded-xl border border-[rgb(var(--color-border))] bg-[rgb(var(--color-cream))] text-xs focus:outline-none focus:border-[#075E54]"
                 />
                 <p className="text-[11px] text-[rgb(var(--color-text-muted))] mt-1">
-                  Link ini akan otomatis disisipkan ke dalam isi pesan di bawah.
+                  Link ini akan otomatis disisipkan ke dalam isi pesan di bawah. Pesan juga memberi tahu client
+                  bahwa link hanya aktif {MASA_AKTIF_LINK_HARI} hari (sampai {batasLinkFormatted}).
                 </p>
               </div>
             )}
