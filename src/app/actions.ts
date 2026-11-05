@@ -17,6 +17,7 @@ import {
   formatRupiah,
 } from '@/lib/utils'
 import { KATEGORI_PENGELUARAN, JENIS_PEMASUKAN } from '@/lib/laporan'
+import { validasiTestimoni, BATAS_KIRIM_PER_HARI, BATAS_KIRIM_GLOBAL_PER_JAM, type StatusTestimoni } from '@/lib/testimoni'
 import { backgroundsUntukKategori, kuotaBackgroundEfektif } from '@/lib/background'
 import {
   getMenitPerUnit,
@@ -1813,5 +1814,107 @@ export async function hapusPengeluaran(id: string): Promise<HasilAksi> {
   const { error } = await supabase.from('pengeluaran').delete().eq('id', id)
   if (error) return { error: error.message }
   revalidatePath('/admin/laporan')
+  return { success: true }
+}
+
+
+// ============================================================
+// TESTIMONI
+// ============================================================
+
+/** Hash IP pengirim (IP asli tidak disimpan). Garam dari env TESTIMONI_SALT bila ada. */
+async function kunciPengirimTestimoni(): Promise<string> {
+  const { headers } = await import('next/headers')
+  const { createHash } = await import('node:crypto')
+  const h = await headers()
+  const ip =
+    (h.get('x-forwarded-for') || '').split(',')[0].trim() ||
+    h.get('x-real-ip') ||
+    h.get('cf-connecting-ip') ||
+    'tidak-diketahui'
+  return createHash('sha256')
+    .update(`${ip}|${process.env.TESTIMONI_SALT || 'desara-testimoni'}`)
+    .digest('hex')
+}
+
+// ---- Public: kirim testimoni (status awal 'menunggu', tampil setelah disetujui admin) ----
+export async function kirimTestimoni(data: {
+  nama: string
+  paket?: string
+  bintang: number
+  isi: string
+  website?: string // honeypot: harus kosong
+}): Promise<HasilAksi> {
+  // Honeypot: bot mengisi kolom tersembunyi. Pura-pura berhasil agar bot tidak mencoba lagi.
+  if (String(data?.website || '').trim()) return { success: true }
+
+  const supabase = await createAdminClient()
+
+  const { data: paketRows } = await supabase.from('packages').select('nama').eq('aktif', true)
+  const daftarPaket = (paketRows || []).map(p => String(p.nama))
+
+  const hasil = validasiTestimoni(data, daftarPaket)
+  if ('error' in hasil) return { error: hasil.error }
+
+  // Batas kirim: per pengirim per hari, dan total per jam
+  const kunci = await kunciPengirimTestimoni()
+  const sehariLalu = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+  const sejamLalu = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+
+  const [{ count: kiriman }, { count: kirimanJam }] = await Promise.all([
+    supabase.from('testimoni').select('id', { count: 'exact', head: true })
+      .eq('kunci_pengirim', kunci).gte('created_at', sehariLalu),
+    supabase.from('testimoni').select('id', { count: 'exact', head: true })
+      .gte('created_at', sejamLalu),
+  ])
+  if ((kiriman ?? 0) >= BATAS_KIRIM_PER_HARI) {
+    return { error: 'Kamu sudah mengirim testimoni hari ini. Coba lagi besok.' }
+  }
+  if ((kirimanJam ?? 0) >= BATAS_KIRIM_GLOBAL_PER_JAM) {
+    return { error: 'Form sedang ramai. Coba lagi beberapa saat lagi.' }
+  }
+
+  const { error } = await supabase.from('testimoni').insert({
+    nama: hasil.data.nama,
+    paket: hasil.data.paket,
+    bintang: hasil.data.bintang,
+    isi: hasil.data.isi,
+    status: 'menunggu',
+    kunci_pengirim: kunci,
+  })
+  if (error) return { error: 'Testimoni belum terkirim. Coba lagi sebentar lagi.' }
+
+  revalidatePath('/admin/testimoni')
+  return { success: true }
+}
+
+// ---- Admin: setujui / sembunyikan / kembalikan ke menunggu ----
+export async function ubahStatusTestimoni(id: string, status: StatusTestimoni): Promise<HasilAksi> {
+  const auth = await requireAdmin()
+  if ('error' in auth) return { error: auth.error }
+  if (typeof id !== 'string' || !id) return { error: 'ID tidak valid.' }
+  if (!['menunggu', 'disetujui', 'disembunyikan'].includes(status)) return { error: 'Status tidak valid.' }
+
+  const supabase = await createAdminClient()
+  const { error } = await supabase
+    .from('testimoni')
+    .update({ status, disetujui_pada: status === 'disetujui' ? new Date().toISOString() : null })
+    .eq('id', id)
+  if (error) return { error: error.message }
+  revalidatePath('/admin/testimoni')
+  revalidatePath('/')
+  return { success: true }
+}
+
+export async function hapusTestimoni(id: string): Promise<HasilAksi> {
+  const auth = await requireAdmin()
+  if ('error' in auth) return { error: auth.error }
+  if (typeof id !== 'string' || !id) return { error: 'ID tidak valid.' }
+
+  const supabase = await createAdminClient()
+  const { error } = await supabase.from('testimoni').delete().eq('id', id)
+  if (error) return { error: error.message }
+  revalidatePath('/admin/testimoni')
+  revalidatePath('/')
   return { success: true }
 }

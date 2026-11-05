@@ -6,7 +6,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import {
   Calendar, Clock, ListOrdered, Package, Settings,
-  LogOut, X, Menu, BarChart3
+  LogOut, X, Menu, BarChart3, Star
 } from 'lucide-react'
 import { useState } from 'react'
 import { cn } from '@/lib/utils'
@@ -14,6 +14,7 @@ import { cn } from '@/lib/utils'
 const navItems = [
   { href: '/admin/bookings',     label: 'Booking',      icon: Calendar },
   { href: '/admin/laporan',      label: 'Laporan',      icon: BarChart3 },
+  { href: '/admin/testimoni',      label: 'Testimoni',    icon: Star },
   { href: '/admin/waitinglist',  label: 'Waiting List', icon: Clock },
   { href: '/admin/packages',     label: 'Paket',        icon: Package },
   { href: '/admin/addons',       label: 'Add-on',       icon: ListOrdered },

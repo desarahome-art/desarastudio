@@ -15,6 +15,7 @@ import {
   Printer,
   ExternalLink,
   Sparkles,
+  Star,
 } from 'lucide-react'
 import type { Booking } from '@/types'
 import { linkAppWhatsApp, linkWebWhatsApp } from '@/lib/whatsapp'
@@ -27,6 +28,7 @@ export type WhatsAppTemplateType =
   | 'reminder_h'
   | 'link_foto'
   | 'ambil_cetakan'
+  | 'minta_testimoni'
 
 interface WhatsAppTemplateModalProps {
   booking: Booking
@@ -188,6 +190,21 @@ export function WhatsAppTemplateModal({
           .filter(Boolean)
           .join('\n')
 
+      case 'minta_testimoni': {
+        const linkTestimoni =
+          typeof window !== 'undefined' ? `${window.location.origin}/testimoni` : '/testimoni'
+        return [
+          `Halo Kak *${booking.nama_klien}*! 🤍`,
+          ``,
+          `Terima kasih sudah berfoto di *${catatanLokasi}*. Kami senang bisa menemani sesi kamu!`,
+          ``,
+          `Boleh minta waktu sebentar untuk menceritakan pengalaman kamu? Isinya tidak sampai 1 menit:`,
+          `${linkTestimoni}`,
+          ``,
+          `Masukan kamu sangat berarti untuk kami berkembang. Terima kasih banyak ya Kak! 🙏✨`,
+        ].join('\n')
+      }
+
       case 'ambil_cetakan':
         return [
           `Halo Kak *${booking.nama_klien}*! 🖼️🎉`,
@@ -241,6 +258,12 @@ export function WhatsAppTemplateModal({
       label: 'Kirim Link Foto',
       icon: ImageIcon,
       desc: 'Kirim link Google Drive/cloud hasil foto',
+    },
+    {
+      id: 'minta_testimoni' as WhatsAppTemplateType,
+      label: 'Minta Testimoni',
+      icon: Star,
+      desc: 'Kirim link form testimoni setelah foto selesai',
     },
     {
       id: 'ambil_cetakan' as WhatsAppTemplateType,
@@ -297,7 +320,7 @@ export function WhatsAppTemplateModal({
           {/* Content Body */}
           <div className="p-4 sm:p-6 overflow-y-auto flex-1 flex flex-col gap-4">
             {/* Pilihan Tab Template */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
               {tabsConfig.map(tab => {
                 const Icon = tab.icon
                 const isActive = activeTab === tab.id

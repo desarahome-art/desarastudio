@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { BookingWizard } from '@/components/booking/BookingWizard'
+import { BagianTestimoni } from '@/components/testimoni/BagianTestimoni'
 import type { Settings, Category, Package, Addon, BackgroundItem, WisudaEvent } from '@/types'
 
 export const dynamic = 'force-dynamic'
@@ -105,6 +106,7 @@ export default async function HomePage() {
         addonCategories={addonCategories}
         wisudaEvents={wisudaEvents}
       />
+      <BagianTestimoni />
     </main>
   )
 }
