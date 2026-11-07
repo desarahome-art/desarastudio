@@ -5,13 +5,31 @@ import { motion } from 'framer-motion'
 import { X, Wallet, Banknote, Landmark, PencilLine } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { formatRupiah, cn } from '@/lib/utils'
-import { catatPembayaran, koreksiPembayaran, type MetodePembayaran } from '@/app/actions'
+import {
+  catatPembayaran,
+  koreksiPembayaran,
+  catatPembayaranWaitingList,
+  koreksiPembayaranWaitingList,
+  type MetodePembayaran,
+} from '@/app/actions'
 import type { Booking } from '@/types'
 
 export type ModePembayaran = 'cicil' | 'lunasi' | 'koreksi'
 
+/** Pembayaran untuk waiting list (belum jadi booking): total = harga paket pilihan client */
+export interface TargetWaitingBayar {
+  id: string
+  nama: string
+  harga: number
+  dibayar: number
+  /** Nominal DP dari Pengaturan, ditawarkan sebagai pilihan cepat saat belum ada pembayaran */
+  dpSaran?: number
+}
+
 interface PembayaranModalProps {
-  booking: Booking
+  /** Isi salah satu: booking ATAU waiting */
+  booking?: Booking
+  waiting?: TargetWaitingBayar
   mode: ModePembayaran
   onClose: () => void
   onSuccess: () => void
@@ -27,9 +45,10 @@ function formatInput(n: number): string {
   return n > 0 ? new Intl.NumberFormat('id-ID').format(n) : ''
 }
 
-export function PembayaranModal({ booking, mode, onClose, onSuccess }: PembayaranModalProps) {
-  const total = Number(booking.total_harga) || 0
-  const sudah = Number(booking.dp_dibayar) || 0
+export function PembayaranModal({ booking, waiting, mode, onClose, onSuccess }: PembayaranModalProps) {
+  const total = waiting ? waiting.harga : Number(booking?.total_harga) || 0
+  const sudah = waiting ? waiting.dibayar : Number(booking?.dp_dibayar) || 0
+  const dpSaran = waiting && sudah === 0 && waiting.dpSaran && waiting.dpSaran < total ? waiting.dpSaran : 0
   const sisa = Math.max(0, total - sudah)
 
   const [jumlahTeks, setJumlahTeks] = useState(() =>
@@ -64,16 +83,26 @@ export function PembayaranModal({ booking, mode, onClose, onSuccess }: Pembayara
     else if (jumlah > sisa) pesanValidasi = `Melebihi sisa pelunasan (${formatRupiah(sisa)}).`
   }
 
-  const judul = isKoreksi ? 'Koreksi Pembayaran' : mode === 'lunasi' ? 'Pelunasan' : 'Catat Cicilan'
+  const judul = isKoreksi
+    ? 'Koreksi Pembayaran'
+    : mode === 'lunasi'
+      ? 'Pelunasan'
+      : waiting && sudah === 0
+        ? 'Catat DP'
+        : 'Catat Pembayaran'
 
   const simpan = async () => {
     if (pesanValidasi) { setError(pesanValidasi); return }
     setLoading(true)
     setError('')
     try {
-      const res = isKoreksi
-        ? await koreksiPembayaran(booking.id, jumlah, catatan)
-        : await catatPembayaran(booking.id, jumlah, metode, catatan)
+      const res = waiting
+        ? isKoreksi
+          ? await koreksiPembayaranWaitingList(waiting.id, jumlah, catatan)
+          : await catatPembayaranWaitingList(waiting.id, jumlah, metode, catatan)
+        : isKoreksi
+          ? await koreksiPembayaran(booking!.id, jumlah, catatan)
+          : await catatPembayaran(booking!.id, jumlah, metode, catatan)
       if (res.error) {
         setError(res.error)
         return
@@ -117,7 +146,9 @@ export function PembayaranModal({ booking, mode, onClose, onSuccess }: Pembayara
             <div>
               <h2 id="pembayaran-judul" className="font-heading font-bold text-lg leading-tight">{judul}</h2>
               <p className="text-xs text-white/80">
-                {booking.nama_klien} · <span className="font-mono">{booking.kode}</span>
+                {waiting
+                  ? <>{waiting.nama} · Waiting list</>
+                  : <>{booking?.nama_klien} · <span className="font-mono">{booking?.kode}</span></>}
               </p>
             </div>
           </div>
@@ -127,7 +158,7 @@ export function PembayaranModal({ booking, mode, onClose, onSuccess }: Pembayara
           {/* Ringkasan saat ini */}
           <div className="grid grid-cols-3 gap-2 text-center">
             {[
-              { label: 'Total', nilai: total, kelas: 'text-[rgb(var(--color-text))]' },
+              { label: waiting ? 'Harga Paket' : 'Total', nilai: total, kelas: 'text-[rgb(var(--color-text))]' },
               { label: 'Sudah Dibayar', nilai: sudah, kelas: 'text-emerald-700' },
               { label: 'Sisa', nilai: total - sudah, kelas: total - sudah > 0 ? 'text-rose-700' : 'text-emerald-700' },
             ].map(r => (
@@ -157,6 +188,15 @@ export function PembayaranModal({ booking, mode, onClose, onSuccess }: Pembayara
             </div>
             {!isKoreksi && sisa > 0 && (
               <div className="mt-2 flex gap-2 flex-wrap">
+                {dpSaran > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => { setJumlahTeks(formatInput(dpSaran)); setError('') }}
+                    className="text-[11px] font-semibold px-2.5 py-1 rounded-full border border-[rgb(var(--color-forest)/0.4)] text-[rgb(var(--color-forest))] bg-[rgb(var(--color-forest)/0.06)] hover:bg-[rgb(var(--color-forest)/0.12)]"
+                  >
+                    DP {formatRupiah(dpSaran)}
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => { setJumlahTeks(formatInput(sisa)); setError('') }}

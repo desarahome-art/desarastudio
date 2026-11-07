@@ -1,13 +1,25 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useMemo, useState, useTransition } from 'react'
 import {
   markWaitingListContacted,
   convertWaitingListToBooking,
   deleteWaitingList,
+  catatPembayaranWaitingList,
 } from '@/app/actions'
+import { PembayaranModal, type ModePembayaran } from './PembayaranModal'
+import {
+  cariPaketWaiting,
+  statusBayarWaiting,
+  ringkasPembayaranWaiting,
+  LABEL_JENIS,
+  LABEL_STATUS_BAYAR,
+  type PaketLike,
+  type StatusBayarWaiting,
+  type JenisPembayaranWaiting,
+} from '@/lib/pembayaran-waiting'
 import { Button } from '@/components/ui/Button'
-import { parseWaitingListInfo, cn, hariIniWIB } from '@/lib/utils'
+import { parseWaitingListInfo, cn, hariIniWIB, formatRupiah } from '@/lib/utils'
 import { linkAppWhatsApp, linkWebWhatsApp } from '@/lib/whatsapp'
 import {
   WaitingListStatusBadge,
@@ -31,16 +43,181 @@ import {
   Info,
   ChevronDown,
   ChevronUp,
+  Wallet,
+  PencilLine,
+  BadgeCheck,
 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { ModernDatePicker } from '@/components/booking/ModernDatePicker'
 import type { WaitingList, ClosedDateItem } from '@/types'
 
+export interface RiwayatBayarWaiting {
+  id: string
+  waiting_list_id: string
+  jenis: JenisPembayaranWaiting
+  jumlah: number
+  metode: 'transfer' | 'tunai' | null
+  catatan: string | null
+  oleh: string | null
+  created_at: string
+}
+
+interface InfoBayar {
+  harga: number
+  dibayar: number
+  sisa: number
+  status: StatusBayarWaiting
+  namaPaket?: string
+}
+
+const KELAS_STATUS_BAYAR: Record<StatusBayarWaiting, string> = {
+  menunggu: 'bg-amber-50 text-amber-800 border-amber-200',
+  dp: 'bg-sky-50 text-sky-800 border-sky-200',
+  lunas: 'bg-emerald-50 text-emerald-800 border-emerald-200',
+}
+
+function BadgeBayar({ status }: { status: StatusBayarWaiting }) {
+  return (
+    <span className={cn('inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium border', KELAS_STATUS_BAYAR[status])}>
+      {status === 'lunas' ? <BadgeCheck className="w-3 h-3" /> : <Wallet className="w-3 h-3" />}
+      {LABEL_STATUS_BAYAR[status]}
+    </span>
+  )
+}
+
+function tglPendek(iso: string) {
+  return new Date(iso).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', timeZone: 'Asia/Jakarta' })
+}
+
+// ── Blok pembayaran di kartu waiting list ────────────────────────────────────
+function BlokPembayaran({
+  info,
+  riwayat,
+  dpMinimal,
+  isConverted,
+  isPending,
+  onKonfirmasiDp,
+  onBuka,
+}: {
+  info: InfoBayar
+  riwayat: RiwayatBayarWaiting[]
+  dpMinimal: number
+  isConverted: boolean
+  isPending: boolean
+  onKonfirmasiDp: (nominal: number) => void
+  onBuka: (mode: ModePembayaran) => void
+}) {
+  const persen = info.harga > 0 ? Math.min(100, Math.round((info.dibayar / info.harga) * 100)) : 0
+  const dpKonfirmasi = Math.min(dpMinimal, info.harga)
+  const tombol = 'inline-flex items-center gap-1.5 rounded-lg h-9 px-3 text-xs font-semibold border transition-colors disabled:opacity-50'
+
+  return (
+    <div className="mb-3 sm:mb-4 rounded-xl border border-[rgb(var(--color-border))] bg-[rgb(var(--color-cream-dark)/0.2)] p-3" data-testid="blok-pembayaran">
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <p className="text-[11px] font-heading font-bold uppercase tracking-wider text-[rgb(var(--color-forest))]">Pembayaran</p>
+        <BadgeBayar status={info.status} />
+      </div>
+      <div className="grid grid-cols-3 gap-2">
+        {[
+          { label: info.namaPaket ? `Paket ${info.namaPaket}` : 'Harga paket', nilai: info.harga, kelas: '' },
+          { label: 'Sudah dibayar', nilai: info.dibayar, kelas: info.dibayar > 0 ? 'text-emerald-700' : '' },
+          { label: 'Sisa', nilai: info.sisa, kelas: info.sisa > 0 ? 'text-rose-700' : 'text-emerald-700' },
+        ].map(k => (
+          <div key={k.label} className="min-w-0">
+            <p className="text-[10px] text-[rgb(var(--color-text-muted))] truncate">{k.label}</p>
+            <p className={cn('font-heading font-bold text-xs sm:text-sm', k.kelas)}>{formatRupiah(k.nilai)}</p>
+          </div>
+        ))}
+      </div>
+      {info.dibayar > 0 && (
+        <div className="mt-2 h-1.5 rounded-full bg-[rgb(var(--color-border))] overflow-hidden">
+          <div className="h-full bg-emerald-600" style={{ width: `${persen}%` }} />
+        </div>
+      )}
+
+      {info.harga === 0 && (
+        <p className="mt-2 text-[11px] text-rose-700">
+          Harga paket tidak ditemukan. Pastikan kategori client punya paket aktif di menu Paket.
+        </p>
+      )}
+
+      {info.status === 'menunggu' && !isConverted && info.harga > 0 && (
+        <p className="mt-2 text-[11px] text-amber-800 flex items-start gap-1.5">
+          <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-px" />
+          DP {formatRupiah(dpKonfirmasi)} belum dicek. Cocokkan dengan bukti transfer di WhatsApp.
+        </p>
+      )}
+
+      {riwayat.length > 0 && (
+        <ul className="mt-2.5 pt-2 border-t border-[rgb(var(--color-border)/0.6)] flex flex-col gap-1 text-[11px] text-[rgb(var(--color-text-muted))]">
+          {riwayat.map(r => (
+            <li key={r.id} className="flex justify-between gap-2">
+              <span className="truncate">
+                {tglPendek(r.created_at)} · {LABEL_JENIS[r.jenis] || r.jenis}
+                {r.metode ? ` · ${r.metode === 'tunai' ? 'tunai' : 'transfer'}` : ''}
+                {r.catatan ? ` · ${r.catatan}` : ''}
+              </span>
+              <span className={cn('font-semibold shrink-0', r.jumlah < 0 ? 'text-rose-700' : 'text-[rgb(var(--color-text))]')}>
+                {r.jumlah < 0 ? '−' : r.jenis === 'koreksi' ? '+' : ''}{formatRupiah(Math.abs(r.jumlah))}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {isConverted ? (
+        <p className="mt-2 text-[11px] text-[rgb(var(--color-text-muted))]">
+          Pembayaran sudah dipindah ke booking. Catat pembayaran berikutnya di menu Booking.
+        </p>
+      ) : info.harga > 0 && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {info.status === 'menunggu' && (
+            <>
+              <button
+                type="button"
+                disabled={isPending}
+                onClick={() => onKonfirmasiDp(dpKonfirmasi)}
+                className={cn(tombol, 'border-transparent bg-[rgb(var(--color-forest))] text-[rgb(var(--color-cream))] hover:bg-[rgb(var(--color-forest-light))]')}
+              >
+                <Check className="w-3.5 h-3.5" /> Konfirmasi DP {formatRupiah(dpKonfirmasi)}
+              </button>
+              <button type="button" disabled={isPending} onClick={() => onBuka('cicil')} className={cn(tombol, 'border-[rgb(var(--color-border))] hover:border-[rgb(var(--color-forest))]')}>
+                Catat nominal lain
+              </button>
+            </>
+          )}
+          {info.status === 'dp' && (
+            <>
+              <button type="button" disabled={isPending} onClick={() => onBuka('cicil')} className={cn(tombol, 'border-[rgb(var(--color-border))] hover:border-[rgb(var(--color-forest))]')}>
+                <Wallet className="w-3.5 h-3.5" /> Catat pembayaran
+              </button>
+              <button
+                type="button"
+                disabled={isPending}
+                onClick={() => onBuka('lunasi')}
+                className={cn(tombol, 'border-transparent bg-[rgb(var(--color-forest))] text-[rgb(var(--color-cream))] hover:bg-[rgb(var(--color-forest-light))]')}
+              >
+                <BadgeCheck className="w-3.5 h-3.5" /> Lunasi {formatRupiah(info.sisa)}
+              </button>
+            </>
+          )}
+          {info.dibayar > 0 && (
+            <button type="button" disabled={isPending} onClick={() => onBuka('koreksi')} className={cn(tombol, 'border-[rgb(var(--color-border))] hover:border-[rgb(var(--color-forest))]')}>
+              <PencilLine className="w-3.5 h-3.5" /> Koreksi
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Modal konfirmasi konversi dengan date picker ──────────────────────────────
 function ConvertModal({
   item,
   parsedJam,
+  bayar,
   closedDates = [],
   onConfirm,
   onClose,
@@ -49,6 +226,7 @@ function ConvertModal({
 }: {
   item: WaitingList
   parsedJam?: string
+  bayar?: InfoBayar
   closedDates?: ClosedDateItem[]
   onConfirm: (tanggal: string) => void
   onClose: () => void
@@ -139,6 +317,28 @@ function ConvertModal({
             />
           </div>
 
+          {/* Pembayaran yang ikut dipindah */}
+          {bayar && (
+            <div
+              className={cn(
+                'rounded-lg border p-3 text-xs flex items-start gap-2',
+                bayar.dibayar > 0 ? 'bg-emerald-50 border-emerald-200 text-emerald-900' : 'bg-amber-50 border-amber-200 text-amber-900'
+              )}
+            >
+              <Wallet className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+              <p className="leading-relaxed">
+                {bayar.dibayar > 0 ? (
+                  <>
+                    Pembayaran <strong>{formatRupiah(bayar.dibayar)}</strong> ikut dipindah ke booking
+                    {bayar.sisa > 0 ? <> · sisa {formatRupiah(bayar.sisa)}</> : <> · <strong>Lunas</strong></>}.
+                  </>
+                ) : (
+                  <>Belum ada pembayaran yang dikonfirmasi. Booking dibuat dengan dibayar <strong>Rp 0</strong>.</>
+                )}
+              </p>
+            </div>
+          )}
+
           {/* Info note */}
           <div className="rounded-lg bg-[rgb(var(--color-forest)/0.06)] border border-[rgb(var(--color-forest)/0.2)] p-3 flex items-start gap-2">
             <Info className="w-3.5 h-3.5 text-[rgb(var(--color-forest))] shrink-0 mt-0.5" />
@@ -184,18 +384,28 @@ function ConvertModal({
 // ── Card Item Component ───────────────────────────────────────────────────────
 function WaitingListRow({
   item,
+  info,
+  riwayat,
+  dpMinimal,
   isPending,
   deletingId,
   onOpenConvert,
   onContacted,
   onDelete,
+  onKonfirmasiDp,
+  onBukaPembayaran,
 }: {
   item: WaitingList
+  info: InfoBayar
+  riwayat: RiwayatBayarWaiting[]
+  dpMinimal: number
   isPending: boolean
   deletingId: string | null
   onOpenConvert: (item: WaitingList) => void
   onContacted: (id: string) => void
-  onDelete: (id: string, nama: string) => void
+  onDelete: (id: string, nama: string, dibayar: number) => void
+  onKonfirmasiDp: (item: WaitingList, nominal: number) => void
+  onBukaPembayaran: (item: WaitingList, mode: ModePembayaran) => void
 }) {
   const [expanded, setExpanded] = useState(false)
   const parsed = parseWaitingListInfo(item.catatan)
@@ -242,6 +452,7 @@ function WaitingListRow({
                 bookingKode={parsed.bookingKode}
                 sudahDihubungi={item.sudah_dihubungi}
               />
+              {!isConverted && <BadgeBayar status={info.status} />}
             </div>
 
             {/* Baris 2: Meta line */}
@@ -291,6 +502,16 @@ function WaitingListRow({
       {/* ── Expanded Detail & Actions ── */}
       {expanded && (
         <div className="border-t border-[rgb(var(--color-border))] p-3 sm:p-4 bg-[rgb(var(--color-surface))]">
+          <BlokPembayaran
+            info={info}
+            riwayat={riwayat}
+            dpMinimal={dpMinimal}
+            isConverted={isConverted}
+            isPending={isPending}
+            onKonfirmasiDp={nominal => onKonfirmasiDp(item, nominal)}
+            onBuka={mode => onBukaPembayaran(item, mode)}
+          />
+
           {/* Informasi Sekunder Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 sm:gap-3 text-sm mb-3 sm:mb-4">
             <ClientCardField label="WhatsApp">
@@ -409,7 +630,7 @@ function WaitingListRow({
               <Button
                 size="sm"
                 variant="ghost"
-                onClick={() => onDelete(item.id, item.nama)}
+                onClick={() => onDelete(item.id, item.nama, info.dibayar)}
                 loading={deletingId === item.id}
                 disabled={isPending || deletingId === item.id}
                 className="rounded-lg h-9 min-h-[40px] text-xs border border-rose-200 text-rose-700 bg-rose-50/40 hover:bg-rose-100/60 hover:border-rose-300 justify-center shrink-0"
@@ -431,10 +652,16 @@ export function WaitingListClient({
   items,
   adminEmail,
   closedDates = [],
+  packages = [],
+  riwayatBayar = {},
+  dpMinimal = 100000,
 }: {
   items: WaitingList[]
   adminEmail?: string
   closedDates?: ClosedDateItem[]
+  packages?: PaketLike[]
+  riwayatBayar?: Record<string, RiwayatBayarWaiting[]>
+  dpMinimal?: number
 }) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
@@ -446,6 +673,45 @@ export function WaitingListClient({
   const [convertParsedJam, setConvertParsedJam] = useState<string | undefined>()
   const [convertLoading, setConvertLoading] = useState(false)
   const [convertError, setConvertError] = useState('')
+  const [bayarTarget, setBayarTarget] = useState<{ item: WaitingList; mode: ModePembayaran } | null>(null)
+
+  // Harga paket & status bayar per waiting list (paket dipilih dengan aturan yang sama seperti saat dipindah ke booking)
+  const infoBayar = useMemo(() => {
+    const peta: Record<string, InfoBayar> = {}
+    for (const it of items) {
+      const pkg = cariPaketWaiting(packages, it.category_id, it.package_nama)
+      const harga = Number(pkg?.harga) || 0
+      const dibayar = Math.max(0, Number(it.dp_dibayar) || 0)
+      peta[it.id] = { harga, dibayar, sisa: Math.max(0, harga - dibayar), status: statusBayarWaiting(harga, dibayar), namaPaket: pkg?.nama }
+    }
+    return peta
+  }, [items, packages])
+
+  const ringkasan = useMemo(
+    () =>
+      ringkasPembayaranWaiting(
+        items.map(it => ({
+          harga: infoBayar[it.id].harga,
+          dibayar: infoBayar[it.id].dibayar,
+          sudahBooking: Boolean(parseWaitingListInfo(it.catatan).bookingKode),
+        }))
+      ),
+    [items, infoBayar]
+  )
+
+  const handleKonfirmasiDp = (item: WaitingList, nominal: number) => {
+    const ok = window.confirm(
+      `Konfirmasi DP ${formatRupiah(nominal)} dari ${item.nama}?\n\nPastikan bukti transfer sudah dicek di WhatsApp.`
+    )
+    if (!ok) return
+    setFeedback(null)
+    startTransition(async () => {
+      const res = await catatPembayaranWaitingList(item.id, nominal, 'transfer', 'Konfirmasi DP (bukti transfer WA)')
+      if (res.error) setFeedback({ type: 'error', message: res.error })
+      else setFeedback({ type: 'success', message: `DP ${item.nama} ${formatRupiah(nominal)} sudah dikonfirmasi.` })
+      router.refresh()
+    })
+  }
 
   const handleContacted = (id: string) => {
     startTransition(async () => {
@@ -455,9 +721,13 @@ export function WaitingListClient({
     })
   }
 
-  const handleDelete = async (id: string, nama: string) => {
+  const handleDelete = async (id: string, nama: string, dibayar = 0) => {
+    const peringatanBayar =
+      dibayar > 0
+        ? `\n\nPERHATIAN: client ini sudah membayar ${formatRupiah(dibayar)}. Riwayat pembayarannya ikut terhapus.`
+        : ''
     const confirmed = window.confirm(
-      `Apakah Anda yakin ingin MENGHAPUS PERMANEN data waiting list client "${nama}"?\n\nTindakan ini tidak dapat dibatalkan.`
+      `Apakah Anda yakin ingin MENGHAPUS PERMANEN data waiting list client "${nama}"?${peringatanBayar}\n\nTindakan ini tidak dapat dibatalkan.`
     )
     if (!confirmed) return
 
@@ -536,6 +806,7 @@ export function WaitingListClient({
         <ConvertModal
           item={convertTarget}
           parsedJam={convertParsedJam}
+          bayar={infoBayar[convertTarget.id]}
           closedDates={closedDates}
           onConfirm={handleConfirmConvert}
           onClose={() => {
@@ -547,7 +818,40 @@ export function WaitingListClient({
         />
       )}
 
+      {/* Modal catat / lunasi / koreksi pembayaran */}
+      {bayarTarget && (
+        <PembayaranModal
+          waiting={{
+            id: bayarTarget.item.id,
+            nama: bayarTarget.item.nama,
+            harga: infoBayar[bayarTarget.item.id]?.harga || 0,
+            dibayar: infoBayar[bayarTarget.item.id]?.dibayar || 0,
+            dpSaran: dpMinimal,
+          }}
+          mode={bayarTarget.mode}
+          onClose={() => setBayarTarget(null)}
+          onSuccess={() => {
+            setBayarTarget(null)
+            router.refresh()
+          }}
+        />
+      )}
+
       <div className="flex flex-col gap-3">
+        {/* Ringkasan pembayaran waiting list yang belum jadi booking */}
+        <div className="grid grid-cols-3 gap-2" data-testid="ringkasan-bayar-waiting">
+          {[
+            { label: 'Menunggu konfirmasi DP', nilai: `${ringkasan.menunggu} client`, kelas: 'text-amber-800' },
+            { label: 'Sudah DP / lunas', nilai: `${ringkasan.dp + ringkasan.lunas} client`, kelas: 'text-[rgb(var(--color-text))]' },
+            { label: 'Uang masuk', nilai: formatRupiah(ringkasan.uangMasuk), kelas: 'text-emerald-700' },
+          ].map(k => (
+            <div key={k.label} className="rounded-xl border border-[rgb(var(--color-border))] bg-[rgb(var(--color-surface))] p-2.5 sm:p-3 min-w-0">
+              <p className="text-[10px] sm:text-[11px] text-[rgb(var(--color-text-muted))] leading-tight">{k.label}</p>
+              <p className={cn('font-heading font-bold text-sm sm:text-base mt-0.5 truncate', k.kelas)}>{k.nilai}</p>
+            </div>
+          ))}
+        </div>
+
         {/* Banner Feedback */}
         {feedback && (
           <div
@@ -582,6 +886,11 @@ export function WaitingListClient({
             <WaitingListRow
               key={item.id}
               item={item}
+              info={infoBayar[item.id]}
+              riwayat={riwayatBayar[item.id] || []}
+              dpMinimal={dpMinimal}
+              onKonfirmasiDp={handleKonfirmasiDp}
+              onBukaPembayaran={(it, mode) => setBayarTarget({ item: it, mode })}
               isPending={isPending}
               deletingId={deletingId}
               onOpenConvert={openConvertModal}

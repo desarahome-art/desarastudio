@@ -154,6 +154,7 @@ export interface WaitingList {
   tanggal_ingin: string | null    // opsional / deprecated (digantikan acara)
   catatan: string | null
   sudah_dihubungi: boolean
+  dp_dibayar?: number | null     // total pembayaran yang sudah dikonfirmasi admin (migrasi 010)
   created_at: string
 }
 

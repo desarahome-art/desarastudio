@@ -17,6 +17,13 @@ import {
   formatRupiah,
 } from '@/lib/utils'
 import { KATEGORI_PENGELUARAN, JENIS_PEMASUKAN } from '@/lib/laporan'
+import {
+  cariPaketWaiting,
+  cekPembayaranWaiting,
+  cekKoreksiWaiting,
+  jenisPembayaranWaiting,
+  LABEL_JENIS,
+} from '@/lib/pembayaran-waiting'
 import { validasiTestimoni, BATAS_KIRIM_PER_HARI, BATAS_KIRIM_GLOBAL_PER_JAM, type StatusTestimoni } from '@/lib/testimoni'
 import { backgroundsUntukKategori, kuotaBackgroundEfektif } from '@/lib/background'
 import {
@@ -471,6 +478,7 @@ export async function submitWaitingList(data: {
     tanggal_ingin: data.tanggal_ingin || null,
     catatan: combinedCatatan,
     sudah_dihubungi: false,
+    dp_dibayar: 0, // menunggu konfirmasi admin (cek bukti transfer di WhatsApp)
   }
 
   const { error } = await supabase.from('waiting_list').insert(payload)
@@ -714,23 +722,23 @@ export async function convertWaitingListToBooking(
     }
   }
 
-  // Coba cocokkan package_nama yang dipilih client di waiting list; kalau tidak ada pakai paket pertama
-  let selectedPkg: Package | undefined
-  if (wl.package_nama) {
-    selectedPkg = (packages as Package[]).find(
-      p => p.nama.toLowerCase() === String(wl.package_nama).toLowerCase()
-    )
-  }
-  if (!selectedPkg) selectedPkg = packages[0] as Package
+  // Cocokkan package_nama pilihan client; bila tidak ada pakai paket pertama (aturan sama dengan kartu waiting list)
+  const selectedPkg = cariPaketWaiting(packages as Package[], wl.category_id, wl.package_nama) as Package
 
-  const { jamBuka, jamTutup, dpMinimal } = await bacaPengaturanOperasional(supabase)
+  const { jamBuka, jamTutup } = await bacaPengaturanOperasional(supabase)
 
   const tanggal = tanggalFoto
   const jamDefault = timeToMinutes(jamBuka) > timeToMinutes('09:00') ? jamBuka : '09:00'
   const jamMulai = normalizeTime(parsedInfo.jam) || jamDefault
   const durasiTotal = selectedPkg.durasi_menit || 30
   const totalHarga = selectedPkg.harga || 0
-  const dpDibayar = Math.min(dpMinimal, totalHarga) // mengikuti Pengaturan (maksimal sebesar total harga)
+  // DP booking = pembayaran yang BENAR-BENAR sudah dikonfirmasi admin di waiting list (bisa 0 atau lunas)
+  const dpDibayar = Math.max(0, Number(wl.dp_dibayar) || 0)
+  if (dpDibayar > totalHarga) {
+    return {
+      error: `Pembayaran tercatat (${formatRupiah(dpDibayar)}) melebihi harga paket saat ini (${formatRupiah(totalHarga)}). Koreksi pembayaran dulu di waiting list.`,
+    }
+  }
 
   // Cek jam operasional & bentrok dengan booking aktif lain
   if (!isSlotWithinOperatingHours(jamMulai, durasiTotal, jamBuka, jamTutup)) {
@@ -795,6 +803,33 @@ export async function convertWaitingListToBooking(
     catatan: 'Booking dibuat otomatis dari data Waiting List oleh admin',
   })
   if (logError) console.error('Gagal menulis log konversi waiting list:', logError.message)
+
+  // 4b. Bawa riwayat pembayaran waiting list ke riwayat pembayaran booking
+  if (dpDibayar > 0) {
+    const { data: riwayat } = await supabase
+      .from('waiting_list_pembayaran')
+      .select('jenis, jumlah, metode, created_at')
+      .eq('waiting_list_id', waitingListId)
+      .order('created_at', { ascending: true })
+    const rincian = (riwayat || [])
+      .map(r => {
+        const tgl = new Date(r.created_at).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', timeZone: 'Asia/Jakarta' })
+        const jenis = LABEL_JENIS[r.jenis as keyof typeof LABEL_JENIS] || r.jenis
+        const metode = r.metode === 'tunai' ? 'Tunai' : r.metode === 'transfer' ? 'Transfer' : ''
+        return `${tgl} ${jenis} ${r.jumlah < 0 ? '-' : ''}${formatRupiah(Math.abs(r.jumlah))}${metode ? ` (${metode})` : ''}`
+      })
+      .join('; ')
+    const { error: logBayarError } = await supabase.from('booking_status_log').insert({
+      booking_id: newBooking.id,
+      status_dari: 'pending',
+      status_ke: 'pending',
+      oleh: adminEmail,
+      catatan:
+        `${LOG_BAYAR} dari waiting list ${formatRupiah(dpDibayar)} · dibayar Rp 0 → ${formatRupiah(dpDibayar)}` +
+        (rincian ? ` · ${rincian}` : ''),
+    })
+    if (logBayarError) console.error('Gagal menulis riwayat pembayaran waiting list:', logBayarError.message)
+  }
 
   // 5. Update catatan di waiting_list agar tertandai sudah dikonversi
   const updatedWlCatatan = `${wl.catatan || ''} [Sudah Masuk Booking: ${newBooking.kode}]`.trim()
@@ -1916,5 +1951,125 @@ export async function hapusTestimoni(id: string): Promise<HasilAksi> {
   if (error) return { error: error.message }
   revalidatePath('/admin/testimoni')
   revalidatePath('/')
+  return { success: true }
+}
+
+
+// ============================================================
+// PEMBAYARAN WAITING LIST — DP / cicilan / pelunasan sebelum client dipindah ke booking.
+// waiting_list.dp_dibayar = total yang sudah dikonfirmasi admin; riwayat di waiting_list_pembayaran.
+// ============================================================
+
+async function ambilWaitingUntukBayar(supabase: AdminClient, id: string) {
+  const { data: wl, error } = await supabase
+    .from('waiting_list')
+    .select('id, category_id, package_nama, catatan, dp_dibayar')
+    .eq('id', id)
+    .single()
+  if (error || !wl) return { error: 'Data waiting list tidak ditemukan.' as const }
+  if (parseWaitingListInfo(wl.catatan).bookingKode) {
+    return { error: 'Waiting list ini sudah dipindah ke booking. Catat pembayaran di menu Booking.' as const }
+  }
+  const { data: packages } = await supabase
+    .from('packages')
+    .select('id, category_id, nama, harga, aktif, urutan')
+    .eq('category_id', wl.category_id)
+    .eq('aktif', true)
+  const pkg = cariPaketWaiting((packages || []) as Package[], wl.category_id, wl.package_nama)
+  return { wl, harga: Number(pkg?.harga) || 0, sudah: Math.max(0, Number(wl.dp_dibayar) || 0) }
+}
+
+export async function catatPembayaranWaitingList(
+  waitingListId: string,
+  jumlah: number,
+  metode: MetodePembayaran,
+  catatan?: string
+): Promise<{ error?: string; success?: boolean; lunas?: boolean }> {
+  const auth = await requireAdmin()
+  if ('error' in auth) return { error: auth.error }
+  if (typeof waitingListId !== 'string' || !waitingListId) return { error: 'ID tidak valid.' }
+  if (!nominalValid(jumlah)) return { error: 'Jumlah pembayaran tidak valid.' }
+  if (metode !== 'transfer' && metode !== 'tunai') return { error: 'Metode pembayaran tidak valid.' }
+
+  const supabase = await createAdminClient()
+  const data = await ambilWaitingUntukBayar(supabase, waitingListId)
+  if ('error' in data) return { error: data.error }
+  const { harga, sudah } = data
+
+  const galat = cekPembayaranWaiting(harga, sudah, jumlah)
+  if (galat) return { error: galat }
+
+  const baru = sudah + jumlah
+  // .eq('dp_dibayar', sudah): bila admin lain baru saja mencatat, update ini tidak menimpa
+  const { data: updated, error } = await supabase
+    .from('waiting_list')
+    .update({ dp_dibayar: baru })
+    .eq('id', waitingListId)
+    .eq('dp_dibayar', sudah)
+    .select('id')
+  if (error) return { error: error.message }
+  if (!updated || updated.length === 0) {
+    return { error: 'Data pembayaran baru saja berubah. Muat ulang halaman lalu coba lagi.' }
+  }
+
+  const { error: logError } = await supabase.from('waiting_list_pembayaran').insert({
+    waiting_list_id: waitingListId,
+    jenis: jenisPembayaranWaiting(sudah, jumlah, harga),
+    jumlah,
+    metode,
+    dibayar_sebelum: sudah,
+    dibayar_sesudah: baru,
+    catatan: (catatan || '').trim().slice(0, 200) || null,
+    oleh: auth.email,
+  })
+  if (logError) console.error('Gagal menulis riwayat pembayaran waiting list:', logError.message)
+
+  revalidatePath('/admin/waitinglist')
+  return { success: true, lunas: baru >= harga }
+}
+
+export async function koreksiPembayaranWaitingList(
+  waitingListId: string,
+  totalDibayarBaru: number,
+  alasan: string
+): Promise<{ error?: string; success?: boolean }> {
+  const auth = await requireAdmin()
+  if ('error' in auth) return { error: auth.error }
+  if (typeof waitingListId !== 'string' || !waitingListId) return { error: 'ID tidak valid.' }
+  if (!nominalValid(totalDibayarBaru)) return { error: 'Nominal tidak valid.' }
+
+  const supabase = await createAdminClient()
+  const data = await ambilWaitingUntukBayar(supabase, waitingListId)
+  if ('error' in data) return { error: data.error }
+  const { harga, sudah } = data
+
+  const alasanBersih = (alasan || '').trim().slice(0, 200)
+  const galat = cekKoreksiWaiting(harga, sudah, totalDibayarBaru, alasanBersih)
+  if (galat) return { error: galat }
+
+  const { data: updated, error } = await supabase
+    .from('waiting_list')
+    .update({ dp_dibayar: totalDibayarBaru })
+    .eq('id', waitingListId)
+    .eq('dp_dibayar', sudah)
+    .select('id')
+  if (error) return { error: error.message }
+  if (!updated || updated.length === 0) {
+    return { error: 'Data pembayaran baru saja berubah. Muat ulang halaman lalu coba lagi.' }
+  }
+
+  const { error: logError } = await supabase.from('waiting_list_pembayaran').insert({
+    waiting_list_id: waitingListId,
+    jenis: 'koreksi',
+    jumlah: totalDibayarBaru - sudah,
+    metode: null,
+    dibayar_sebelum: sudah,
+    dibayar_sesudah: totalDibayarBaru,
+    catatan: alasanBersih,
+    oleh: auth.email,
+  })
+  if (logError) console.error('Gagal menulis riwayat koreksi waiting list:', logError.message)
+
+  revalidatePath('/admin/waitinglist')
   return { success: true }
 }

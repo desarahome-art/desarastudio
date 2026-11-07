@@ -11,6 +11,12 @@ import {
 } from '@/app/actions'
 import { getMenitPerUnit } from '@/lib/addon-calc'
 import { hitungRekapBooking } from '@/lib/rekap-booking'
+import {
+  statusBayarBooking,
+  ringkasPembayaranBooking,
+  susunRiwayatBooking,
+  type StatusBayarBooking,
+} from '@/lib/pembayaran-booking'
 import { linkAppWhatsApp, linkWebWhatsApp } from '@/lib/whatsapp'
 import { Button } from '@/components/ui/Button'
 import { AdminCalendarPicker } from './AdminCalendarPicker'
@@ -46,6 +52,8 @@ import {
   Wallet,
   PencilLine,
   BadgeCheck,
+  AlertCircle,
+  Info,
 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import type { Booking, BookingStatus, CetakStatus, Package, Category, Addon, AddonCategory, BackgroundItem, ClosedDateItem } from '@/types'
@@ -64,31 +72,42 @@ function infoBayar(b: Booking) {
   return { total, dibayar, sisa, lunas: sisa <= 0 }
 }
 
-function formatWaktuLog(iso: string) {
+function formatTanggalPendek(iso: string) {
   try {
-    return new Date(iso).toLocaleString('id-ID', {
-      timeZone: 'Asia/Jakarta',
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
+    return new Date(iso).toLocaleDateString('id-ID', { timeZone: 'Asia/Jakarta', day: 'numeric', month: 'short' })
   } catch {
-    return iso
+    return ''
   }
 }
 
-function BadgeBayar({ booking }: { booking: Booking }) {
-  if (booking.status === 'dibatalkan') return null
-  const { sisa, lunas } = infoBayar(booking)
-  return lunas ? (
-    <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-800 bg-emerald-50 px-1.5 py-0.5 rounded-full border border-emerald-200">
-      <BadgeCheck className="w-3 h-3" /> Lunas
-    </span>
-  ) : (
-    <span className="inline-flex items-center text-[10px] font-semibold text-rose-700 bg-rose-50 px-1.5 py-0.5 rounded-full border border-rose-200">
-      Sisa {formatRupiah(sisa)}
+const GAYA_BAYAR: Record<StatusBayarBooking, string> = {
+  belum_dicek: 'text-amber-800 bg-amber-50 border-amber-200',
+  belum_bayar: 'text-rose-700 bg-rose-50 border-rose-200',
+  dp: 'text-sky-800 bg-sky-50 border-sky-200',
+  lunas: 'text-emerald-800 bg-emerald-50 border-emerald-200',
+  batal: 'text-rose-700 bg-rose-50 border-rose-200',
+}
+
+// Label bayar disamakan dengan Waiting List
+function labelBayar(booking: Booking, status: StatusBayarBooking, ringkas = false): string {
+  const { sisa, dibayar } = infoBayar(booking)
+  if (status === 'belum_dicek') return 'DP belum dicek'
+  if (status === 'belum_bayar') return `Belum bayar · sisa ${formatRupiah(sisa)}`
+  if (status === 'dp') return `DP · sisa ${formatRupiah(sisa)}`
+  if (status === 'lunas') return 'Lunas'
+  if (dibayar <= 0) return ''
+  return ringkas ? `DP ${formatRupiah(dibayar)} ditahan` : `DP ${formatRupiah(dibayar)} tidak dikembalikan otomatis`
+}
+
+/** ringkas: versi pendek untuk header kartu (layar HP sempit) */
+function BadgeBayar({ booking, ringkas = false }: { booking: Booking; ringkas?: boolean }) {
+  const status = statusBayarBooking(booking)
+  const label = labelBayar(booking, status, ringkas)
+  if (!label) return null
+  return (
+    <span className={cn('inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full border', GAYA_BAYAR[status])}>
+      {status === 'lunas' ? <BadgeCheck className="w-3 h-3" /> : <Wallet className="w-3 h-3" />}
+      {label}
     </span>
   )
 }
@@ -287,9 +306,9 @@ function BookingRow({
                 {formatRupiah(booking.total_harga)}
               </p>
               <p className="text-[11px] text-[rgb(var(--color-text-muted))] mb-0.5">
-                Dibayar {formatRupiah(booking.dp_dibayar)}
+                {booking.status === 'pending' ? 'DP' : 'Dibayar'} {formatRupiah(booking.dp_dibayar)}
               </p>
-              <BadgeBayar booking={booking} />
+              <BadgeBayar booking={booking} ringkas />
             </div>
             <div className="w-6 h-6 rounded-md flex items-center justify-center text-[rgb(var(--color-text-muted))] hover:text-[rgb(var(--color-text))]">
               {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
@@ -361,17 +380,19 @@ function BookingRow({
               </ClientCardField>
             )}
 
-            {/* ── Section Pembayaran (DP + cicilan + pelunasan) ── */}
+            {/* ── Section Pembayaran — disamakan dengan Waiting List ── */}
             {(() => {
-              const { total, dibayar, sisa, lunas } = infoBayar(booking)
+              const { total, dibayar, sisa } = infoBayar(booking)
+              const status = statusBayarBooking(booking)
+              const batal = status === 'batal'
+              const lunas = status === 'lunas'
               const persen = total > 0 ? Math.min(100, Math.round((dibayar / total) * 100)) : 100
-              const bisaBayar = booking.status !== 'dibatalkan' && sisa > 0
-              // DP awal = nilai "dibayar" sebelum catatan pembayaran pertama
-              const dpAwal = riwayat.length > 0
-                ? (riwayat[0].catatan.match(/dibayar (.+?) →/)?.[1] ?? null)
-                : formatRupiah(dibayar)
+              // Catat/lunasi hanya untuk booking yang sudah disetujui atau selesai; booking Menunggu cukup Koreksi DP
+              const bisaBayar = (booking.status === 'booking' || booking.status === 'selesai') && sisa > 0
+              const barisRiwayat = susunRiwayatBooking(booking, riwayat)
+              const tombol = 'inline-flex items-center gap-1.5 rounded-lg h-9 px-3 text-xs font-semibold border transition-colors'
               return (
-                <div className="sm:col-span-2 rounded-lg border border-[rgb(var(--color-border))] bg-[rgb(var(--color-cream-dark)/0.2)] p-2.5 sm:p-3">
+                <div className="sm:col-span-2 rounded-lg border border-[rgb(var(--color-border))] bg-[rgb(var(--color-cream-dark)/0.2)] p-2.5 sm:p-3" data-testid="blok-pembayaran">
                   <div className="flex items-center justify-between gap-2 mb-2">
                     <span className="text-xs font-semibold text-[rgb(var(--color-text))] flex items-center gap-1.5">
                       <Wallet className="w-3.5 h-3.5 text-[rgb(var(--color-forest))]" />
@@ -380,82 +401,92 @@ function BookingRow({
                     <BadgeBayar booking={booking} />
                   </div>
 
-                  <div className="grid grid-cols-3 gap-2 text-center mb-2">
-                    <div>
-                      <p className="text-[10px] text-[rgb(var(--color-text-muted))]">Total</p>
-                      <p className="font-heading font-semibold text-xs sm:text-sm">{formatRupiah(total)}</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] text-[rgb(var(--color-text-muted))]">Sudah Dibayar</p>
-                      <p className="font-heading font-semibold text-xs sm:text-sm text-emerald-700">{formatRupiah(dibayar)}</p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] text-[rgb(var(--color-text-muted))]">{sisa < 0 ? 'Lebih Bayar' : 'Sisa'}</p>
-                      <p className={cn('font-heading font-semibold text-xs sm:text-sm', lunas ? 'text-emerald-700' : 'text-rose-700')}>
-                        {formatRupiah(Math.abs(sisa))}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="h-1.5 rounded-full bg-[rgb(var(--color-border))] overflow-hidden mb-2.5" aria-hidden>
-                    <div
-                      className={cn('h-full rounded-full transition-all', lunas ? 'bg-emerald-500' : 'bg-amber-500')}
-                      style={{ width: `${persen}%` }}
-                    />
-                  </div>
-
-                  {/* Riwayat */}
-                  <ul className="space-y-1 mb-2.5">
-                    {dpAwal && (
-                      <li className="text-[11px] text-[rgb(var(--color-text-muted))] flex justify-between gap-2">
-                        <span>DP saat booking</span>
-                        <span className="font-medium text-[rgb(var(--color-text))]">{dpAwal}</span>
-                      </li>
-                    )}
-                    {riwayat.map((r, i) => (
-                      <li
-                        key={i}
-                        className="text-[11px] leading-snug px-2 py-1.5 rounded-md bg-[rgb(var(--color-surface))] border border-[rgb(var(--color-border)/0.6)]"
-                      >
-                        <span className="text-[rgb(var(--color-text))]">{r.catatan}</span>
-                        <span className="block text-[10px] text-[rgb(var(--color-text-muted))] mt-0.5">
-                          {formatWaktuLog(r.created_at)} WIB{r.oleh ? ` · ${r.oleh}` : ''}
-                        </span>
-                      </li>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { label: 'Total', nilai: formatRupiah(total), kelas: '' },
+                      {
+                        label: booking.status === 'pending' ? 'DP dari client' : 'Sudah dibayar',
+                        nilai: formatRupiah(dibayar),
+                        kelas: dibayar > 0 && booking.status !== 'pending' ? 'text-emerald-700' : '',
+                      },
+                      {
+                        label: sisa < 0 ? 'Lebih bayar' : 'Sisa',
+                        nilai: batal ? '-' : formatRupiah(Math.abs(sisa)),
+                        kelas: batal ? '' : lunas ? 'text-emerald-700' : 'text-rose-700',
+                      },
+                    ].map(k => (
+                      <div key={k.label} className="min-w-0">
+                        <p className="text-[10px] text-[rgb(var(--color-text-muted))] truncate">{k.label}</p>
+                        <p className={cn('font-heading font-semibold text-xs sm:text-sm', k.kelas)}>{k.nilai}</p>
+                      </div>
                     ))}
-                  </ul>
+                  </div>
 
-                  <div className="flex flex-wrap gap-2">
+                  {!batal && booking.status !== 'pending' && dibayar > 0 && (
+                    <div className="mt-2 h-1.5 rounded-full bg-[rgb(var(--color-border))] overflow-hidden" aria-hidden>
+                      <div className="h-full rounded-full bg-emerald-600" style={{ width: `${persen}%` }} />
+                    </div>
+                  )}
+
+                  {status === 'belum_dicek' && (
+                    <p className="mt-2 text-[11px] text-amber-800 flex items-start gap-1.5">
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-px" />
+                      DP {formatRupiah(dibayar)} belum dicek. Cocokkan dengan bukti transfer di WhatsApp, lalu klik Konfirmasi Booking.
+                    </p>
+                  )}
+                  {batal && dibayar > 0 && (
+                    <p className="mt-2 text-[11px] text-rose-700 flex items-start gap-1.5">
+                      <Info className="w-3.5 h-3.5 shrink-0 mt-px" />
+                      Booking dibatalkan. Bila DP dikembalikan ke client, koreksi pembayaran ke Rp 0.
+                    </p>
+                  )}
+
+                  {barisRiwayat.length > 0 && (
+                    <ul className="mt-2.5 pt-2 border-t border-[rgb(var(--color-border)/0.6)] flex flex-col gap-1 text-[11px] text-[rgb(var(--color-text-muted))]">
+                      {barisRiwayat.map((r, i) => (
+                        <li key={i} className="flex justify-between gap-2" title={r.oleh ? `Dicatat oleh ${r.oleh}` : undefined}>
+                          <span className="min-w-0">
+                            {r.created_at ? `${formatTanggalPendek(r.created_at)} · ` : ''}{r.label}
+                            {r.rincian ? ` · ${r.rincian}` : ''}
+                          </span>
+                          {r.jumlah !== null && (
+                            <span className={cn('font-semibold shrink-0', r.jumlah < 0 ? 'text-rose-700' : 'text-[rgb(var(--color-text))]')}>
+                              {r.jumlah < 0 ? '−' : r.label === 'Koreksi' ? '+' : ''}{formatRupiah(Math.abs(r.jumlah))}
+                            </span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+
+                  <div className="mt-3 flex flex-wrap gap-2">
                     {bisaBayar && (
                       <>
-                        <Button
-                          size="sm"
-                          onClick={() => onOpenPembayaran(booking, 'lunasi')}
-                          className="rounded-lg h-9 min-h-[36px] text-xs font-semibold flex-1 sm:flex-none"
-                        >
-                          <BadgeCheck className="w-3.5 h-3.5" />
-                          Lunasi {formatRupiah(sisa)}
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
+                        <button
+                          type="button"
                           onClick={() => onOpenPembayaran(booking, 'cicil')}
-                          className="rounded-lg h-9 min-h-[36px] text-xs border border-[rgb(var(--color-forest)/0.4)] text-[rgb(var(--color-forest))] flex-1 sm:flex-none"
+                          className={cn(tombol, 'border-[rgb(var(--color-border))] hover:border-[rgb(var(--color-forest))]')}
                         >
-                          <Wallet className="w-3.5 h-3.5" />
-                          Catat Cicilan
-                        </Button>
+                          <Wallet className="w-3.5 h-3.5" /> Catat pembayaran
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onOpenPembayaran(booking, 'lunasi')}
+                          className={cn(tombol, 'border-transparent bg-[rgb(var(--color-forest))] text-[rgb(var(--color-cream))] hover:bg-[rgb(var(--color-forest-light))]')}
+                        >
+                          <BadgeCheck className="w-3.5 h-3.5" /> Lunasi {formatRupiah(sisa)}
+                        </button>
                       </>
                     )}
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => onOpenPembayaran(booking, 'koreksi')}
-                      className="rounded-lg h-9 min-h-[36px] text-xs border border-[rgb(var(--color-border))] text-[rgb(var(--color-text-muted))] flex-1 sm:flex-none"
-                    >
-                      <PencilLine className="w-3.5 h-3.5" />
-                      Koreksi
-                    </Button>
+                    {(dibayar > 0 || booking.status === 'pending') && (
+                      <button
+                        type="button"
+                        onClick={() => onOpenPembayaran(booking, 'koreksi')}
+                        className={cn(tombol, 'border-[rgb(var(--color-border))] hover:border-[rgb(var(--color-forest))]')}
+                      >
+                        <PencilLine className="w-3.5 h-3.5" /> {booking.status === 'pending' ? 'Koreksi DP' : 'Koreksi'}
+                      </button>
+                    )}
                   </div>
                 </div>
               )
@@ -781,7 +812,6 @@ export function BookingsClient({
     return matchSearch && matchStatus && matchTanggal && matchCetak && matchBayar
   })
 
-  // Ringkasan tagihan: semua booking aktif yang belum lunas
   // Rekap client & cetak: mengikuti daftar yang sedang tampil (tanggal, filter, pencarian)
   const rekap = useMemo(() => {
     const ukuranAddon: Record<string, string | null> = {}
@@ -789,19 +819,8 @@ export function BookingsClient({
     return hitungRekapBooking(filtered, ukuranAddon)
   }, [filtered, addons])
 
-  const ringkasanTagihan = useMemo(() => {
-    let jumlah = 0
-    let totalSisa = 0
-    for (const b of initialBookings) {
-      if (b.status === 'dibatalkan') continue
-      const { sisa } = infoBayar(b)
-      if (sisa > 0) {
-        jumlah += 1
-        totalSisa += sisa
-      }
-    }
-    return { jumlah, totalSisa }
-  }, [initialBookings])
+  // Ringkasan pembayaran: mengikuti daftar yang sedang tampil (sama seperti rekap client & cetak)
+  const ringkasanBayar = useMemo(() => ringkasPembayaranBooking(filtered), [filtered])
 
   // Booking untuk tanggal aktif terpilih atau hari ini
   // Hari ini menurut WIB (bukan UTC), supaya jam 00:00–06:59 tidak salah tanggal
@@ -1045,39 +1064,34 @@ export function BookingsClient({
         </div>
       )}
 
-      {/* ── Ringkasan Tagihan ── */}
-      {ringkasanTagihan.jumlah > 0 && (
+      {/* ── Ringkasan Pembayaran (mengikuti data yang tampil) ── */}
+      <div className="mb-3 grid grid-cols-3 gap-2" data-testid="ringkasan-bayar-booking">
+        <div className="rounded-xl border border-[rgb(var(--color-border))] bg-[rgb(var(--color-surface))] p-2.5 sm:p-3 min-w-0">
+          <p className="text-[10px] sm:text-[11px] text-[rgb(var(--color-text-muted))] leading-tight">DP belum dicek</p>
+          <p className="font-heading font-bold text-sm sm:text-base mt-0.5 text-amber-800">{ringkasanBayar.belumDicek} booking</p>
+        </div>
         <button
           type="button"
           onClick={() => setFilterBayar(f => (f === 'belum_lunas' ? 'all' : 'belum_lunas'))}
+          aria-pressed={filterBayar === 'belum_lunas'}
+          title={filterBayar === 'belum_lunas' ? 'Klik untuk tampilkan semua' : 'Klik untuk tampilkan yang belum lunas'}
           className={cn(
-            'w-full mb-4 p-3 rounded-xl border text-left flex items-center justify-between gap-3 transition-colors',
+            'rounded-xl border p-2.5 sm:p-3 min-w-0 text-left transition-colors',
             filterBayar === 'belum_lunas'
               ? 'bg-rose-50 border-rose-300'
               : 'bg-[rgb(var(--color-surface))] border-[rgb(var(--color-border))] hover:border-rose-300'
           )}
         >
-          <span className="flex items-center gap-2.5">
-            <span className="w-8 h-8 rounded-lg bg-rose-100 text-rose-700 flex items-center justify-center shrink-0">
-              <Wallet className="w-4 h-4" />
-            </span>
-            <span>
-              <span className="block font-heading font-semibold text-xs sm:text-sm text-[rgb(var(--color-text))]">
-                {ringkasanTagihan.jumlah} booking belum lunas
-              </span>
-              <span className="block text-[11px] text-[rgb(var(--color-text-muted))]">
-                {filterBayar === 'belum_lunas' ? 'Klik untuk tampilkan semua' : 'Klik untuk tampilkan daftarnya'}
-              </span>
-            </span>
-          </span>
-          <span className="text-right shrink-0">
-            <span className="block text-[10px] text-[rgb(var(--color-text-muted))]">Total sisa tagihan</span>
-            <span className="block font-heading font-bold text-sm sm:text-base text-rose-700">
-              {formatRupiah(ringkasanTagihan.totalSisa)}
-            </span>
-          </span>
+          <p className="text-[10px] sm:text-[11px] text-[rgb(var(--color-text-muted))] leading-tight">
+            {ringkasanBayar.belumLunas} belum lunas · sisa tagihan
+          </p>
+          <p className="font-heading font-bold text-sm sm:text-base mt-0.5 text-rose-700 truncate">{formatRupiah(ringkasanBayar.sisaTagihan)}</p>
         </button>
-      )}
+        <div className="rounded-xl border border-[rgb(var(--color-border))] bg-[rgb(var(--color-surface))] p-2.5 sm:p-3 min-w-0">
+          <p className="text-[10px] sm:text-[11px] text-[rgb(var(--color-text-muted))] leading-tight">Uang masuk (sudah dicek)</p>
+          <p className="font-heading font-bold text-sm sm:text-base mt-0.5 text-emerald-700 truncate">{formatRupiah(ringkasanBayar.uangMasuk)}</p>
+        </div>
+      </div>
 
       {/* ── Rekap Client & Cetak (mengikuti data yang tampil) ── */}
       <div className="mb-4 p-3 rounded-xl border bg-[rgb(var(--color-surface))] border-[rgb(var(--color-border))]">
